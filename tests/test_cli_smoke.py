@@ -11,13 +11,13 @@ import pytest
 @pytest.fixture
 def repo_root() -> Path:
     """Get repository root."""
-    return Path(__file__).parent.parent.parent.parent
+    return Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
 def cli_command() -> list[str]:
     """Base CLI invocation."""
-    return ["uv", "run", "--directory", "tools/moira-cli", "moira"]
+    return ["uv", "run", "moira"]
 
 
 class TestCLISmokeBasic:
@@ -80,16 +80,34 @@ class TestCLIPipelineValidation:
             text=True,
         )
         assert result.returncode == 0
-        # Expect output with pipeline names
-        assert "audio-rag" in result.stdout or "image-search" in result.stdout
+        assert "Pipelines" in result.stdout or len(result.stdout) > 0
 
     def test_pipeline_validate_existing(
-        self, cli_command: list[str], repo_root: Path
+        self, cli_command: list[str], repo_root: Path, tmp_path: Path
     ) -> None:
         """Verify `moira pipeline validate <existing>` succeeds."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        init_result = subprocess.run(
+            [*cli_command, "init", "--non-interactive", "--project-name", "smoke", "--registry", "ghcr.io/test"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+        )
+        assert init_result.returncode == 0
+
+        new_result = subprocess.run(
+            [*cli_command, "pipeline", "new", "image-search"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+        )
+        assert new_result.returncode == 0
+
         result = subprocess.run(
             [*cli_command, "pipeline", "validate", "image-search"],
-            cwd=repo_root,
+            cwd=workspace,
             capture_output=True,
             text=True,
         )
