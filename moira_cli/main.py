@@ -309,9 +309,7 @@ def _load_catalog_document(repo_root: pathlib.Path) -> tuple[str, dict[str, Any]
     """
     config = load_moiraweave_config(repo_root)
     enabled_catalogs = [
-        (name, catalog)
-        for name, catalog in config.catalogs.items()
-        if catalog.enabled
+        (name, catalog) for name, catalog in config.catalogs.items() if catalog.enabled
     ]
     if not enabled_catalogs:
         _exit_with_error("No enabled catalogs found in moiraweave.yaml")
@@ -407,7 +405,9 @@ def _run_project_init(
             registry = "ghcr.io/myorg"
         else:
             registry = (
-                questionary.text("OCI registry (e.g., ghcr.io/myorg)", default="ghcr.io/myorg").ask()
+                questionary.text(
+                    "OCI registry (e.g., ghcr.io/myorg)", default="ghcr.io/myorg"
+                ).ask()
                 or "ghcr.io/myorg"
             )
 
@@ -438,7 +438,9 @@ def _run_project_init(
 @app.command()
 def init(
     non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
-    project_name: str = typer.Option(None, help="Project name (default: current directory)."),
+    project_name: str = typer.Option(
+        None, help="Project name (default: current directory)."
+    ),
     registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
 ) -> None:
     """Initialize a new MoiraWeave project workspace.
@@ -451,7 +453,9 @@ def init(
 @project_app.command("init")
 def project_init(
     non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
-    project_name: str = typer.Option(None, help="Project name (default: current directory)."),
+    project_name: str = typer.Option(
+        None, help="Project name (default: current directory)."
+    ),
     registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
 ) -> None:
     """Initialize a new MoiraWeave project workspace.
@@ -868,9 +872,7 @@ def step_add(
     catalog_name, catalog = _load_catalog_document(repo_root)
     catalog_steps = list(catalog.get("steps", []))
     candidates = [
-        dict(step)
-        for step in catalog_steps
-        if str(step.get("name", "")) == step_name
+        dict(step) for step in catalog_steps if str(step.get("name", "")) == step_name
     ]
     if not candidates:
         _exit_with_error(f"Step not found in catalog {catalog_name}: {step_name}")
@@ -936,9 +938,7 @@ def step_add(
         encoding="utf-8",
     )
 
-    console.print(
-        f"[green]Added official step:[/green] {step_name}@{selected_version}"
-    )
+    console.print(f"[green]Added official step:[/green] {step_name}@{selected_version}")
     console.print(f"[cyan]Catalog:[/cyan] {catalog_name}")
     console.print(f"[cyan]Image:[/cyan] {image_uri}")
     console.print(f"[cyan]Created:[/cyan] {materialized_path}")
