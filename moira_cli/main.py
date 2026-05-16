@@ -6,7 +6,7 @@ import json
 import pathlib
 import subprocess
 import time
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlparse
 
 import httpx
@@ -69,7 +69,7 @@ def _render_header(title: str) -> None:
     console.print(Panel.fit(f"[bold cyan]{title}[/bold cyan]"))
 
 
-def _exit_with_error(message: str, code: int = 1) -> None:
+def _exit_with_error(message: str, code: int = 1) -> NoReturn:
     """Print an error and terminate.
 
     :param message: Human-readable error message.
@@ -1173,7 +1173,7 @@ def pipeline_status(
 
     config = load_moiraweave_config(repo_root)
     target = config.environments.get(env)
-    namespace = target.namespace if target else "moiraweave"
+    namespace = target.namespace if target and target.namespace else "moiraweave"
 
     output = _run_command(
         [
@@ -1209,7 +1209,7 @@ def pipeline_logs(
     repo_root = _repo_root()
     config = load_moiraweave_config(repo_root)
     target = config.environments.get(env)
-    namespace = target.namespace if target else "moiraweave"
+    namespace = target.namespace if target and target.namespace else "moiraweave"
 
     command = [
         "kubectl",
@@ -1244,7 +1244,7 @@ def pipeline_scale(
     repo_root = _repo_root()
     config = load_moiraweave_config(repo_root)
     target = config.environments.get(env)
-    namespace = target.namespace if target else "moiraweave"
+    namespace = target.namespace if target and target.namespace else "moiraweave"
 
     output = _run_command(
         [
@@ -1280,7 +1280,7 @@ def pipeline_rollback(
     repo_root = _repo_root()
     config = load_moiraweave_config(repo_root)
     target = config.environments.get(env)
-    namespace = target.namespace if target else "moiraweave"
+    namespace = target.namespace if target and target.namespace else "moiraweave"
 
     if revision > 0:
         command = ["helm", "rollback", "moiraweave", str(revision), "-n", namespace]
