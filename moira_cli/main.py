@@ -39,12 +39,14 @@ step_app = typer.Typer(help="Manage steps")
 pipeline_app = typer.Typer(help="Manage pipelines")
 models_app = typer.Typer(help="Manage model cache and readiness")
 job_app = typer.Typer(help="Inspect detached jobs")
+project_app = typer.Typer(help="Manage workspace project")
 
 app.add_typer(task_app, name="task")
 app.add_typer(step_app, name="step")
 app.add_typer(pipeline_app, name="pipeline")
 app.add_typer(models_app, name="models")
 app.add_typer(job_app, name="job")
+app.add_typer(project_app, name="project")
 
 
 def _repo_root() -> pathlib.Path:
@@ -277,15 +279,101 @@ def _bump_semver(version: str, kind: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
-@app.command()
-def init(
-    non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
-    project_name: str = typer.Option(None, help="Project name (default: current directory)."),
-    registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
-) -> None:
-    """Initialize a new MoiraWeave project workspace.
+def _catalog_raw_url_from_uri(uri: str) -> str | None:
+    """Resolve a catalog URI to a raw catalog URL when possible.
 
-    Creates moiraweave.yaml, .env, and full directory structure (pipelines/, steps/, tasks/, deploy/).
+    :param uri: Catalog source URI from config.
+    :returns: HTTP URL for catalog content or ``None`` if unsupported.
+    """
+    parsed = urlparse(uri)
+    if parsed.scheme in {"http", "https"} and parsed.path.endswith(
+        (".yaml", ".yml", ".json")
+    ):
+        return uri
+
+    if parsed.scheme in {"http", "https"} and parsed.netloc == "github.com":
+        parts = [segment for segment in parsed.path.strip("/").split("/") if segment]
+        if len(parts) >= 2:
+            owner, repo = parts[0], parts[1].replace(".git", "")
+            return f"https://raw.githubusercontent.com/{owner}/{repo}/main/catalog.yaml"
+
+    return None
+
+
+def _load_catalog_document(repo_root: pathlib.Path) -> tuple[str, dict[str, Any]]:
+    """Load the first enabled catalog from local path or remote URI.
+
+    :param repo_root: Repository root.
+    :returns: Tuple of catalog name and parsed catalog payload.
+    :raises typer.Exit: If no enabled catalog can be loaded.
+    """
+    config = load_moiraweave_config(repo_root)
+    enabled_catalogs = [
+        (name, catalog)
+        for name, catalog in config.catalogs.items()
+        if catalog.enabled
+    ]
+    if not enabled_catalogs:
+        _exit_with_error("No enabled catalogs found in moiraweave.yaml")
+
+    catalog_name, source = enabled_catalogs[0]
+    local_catalog = repo_root / "catalog.yaml"
+    if local_catalog.exists():
+        return catalog_name, _load_yaml_file(local_catalog)
+
+    source_uri = source.uri
+    parsed = urlparse(source_uri)
+    if parsed.scheme in {"", "file"}:
+        local_path = pathlib.Path(parsed.path or source_uri)
+        if not local_path.is_absolute():
+            local_path = (repo_root / local_path).resolve()
+        if local_path.is_file():
+            if local_path.suffix.lower() == ".json":
+                return catalog_name, _read_json_file(local_path)
+            return catalog_name, _load_yaml_file(local_path)
+
+    raw_url = _catalog_raw_url_from_uri(source_uri)
+    if raw_url is None:
+        _exit_with_error(
+            f"Unsupported catalog URI: {source_uri}. Use file path or GitHub URL."
+        )
+    assert raw_url is not None
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(raw_url)
+            response.raise_for_status()
+            if raw_url.endswith(".json"):
+                data = response.json()
+            else:
+                data = yaml.safe_load(response.text)
+            return catalog_name, dict(data or {})
+    except Exception as exc:  # pragma: no cover - network failures
+        _exit_with_error(f"Failed to load catalog from {raw_url}: {exc}")
+
+
+def _semver_key(version: str) -> tuple[int, int, int]:
+    """Return a sortable key for ``MAJOR.MINOR.PATCH`` versions.
+
+    :param version: Version string.
+    :returns: Numeric tuple for sorting.
+    """
+    parts = version.strip().split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return (0, 0, 0)
+    return tuple(int(part) for part in parts)  # type: ignore[return-value]
+
+
+def _run_project_init(
+    non_interactive: bool,
+    project_name: str | None,
+    registry: str | None,
+) -> None:
+    """Initialize a new workspace project.
+
+    :param non_interactive: Skip prompts when ``True``.
+    :param project_name: Optional project name.
+    :param registry: Optional OCI registry.
     """
     repo_root = _repo_root()
     config_path = repo_root / "moiraweave.yaml"
@@ -305,7 +393,6 @@ def init(
         console.print(table)
         return
 
-    # Determine project name
     if project_name is None:
         if non_interactive:
             project_name = repo_root.name
@@ -315,7 +402,6 @@ def init(
                 or repo_root.name
             )
 
-    # Determine registry
     if registry is None:
         if non_interactive:
             registry = "ghcr.io/myorg"
@@ -325,7 +411,6 @@ def init(
                 or "ghcr.io/myorg"
             )
 
-    # Write config and scaffold structure
     write_default_moiraweave_config(repo_root, project_name, registry)
     ensure_local_env(repo_root)
     scaffold_workspace_structure(repo_root)
@@ -341,13 +426,43 @@ def init(
     console.print(
         Panel(
             "Next steps:\n"
-            "1) moira step new <task> <impl>  — Scaffold a new step\n"
-            "2) moira step add --from-catalog text-embed-fastembed  — Add official step\n"
-            "3) moira pipeline new <name>  — Scaffold a new pipeline\n"
-            "4) moira pipeline dev <name>  — Test your pipeline locally",
+            "1) moira step new <task> <impl>  - Scaffold a new step\n"
+            "2) moira step add --from-catalog text-embed-fastembed  - Add official step\n"
+            "3) moira pipeline new <name>  - Scaffold a new pipeline\n"
+            "4) moira pipeline dev <name>  - Test your pipeline locally",
             title="Ready to start",
         )
     )
+
+
+@app.command()
+def init(
+    non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
+    project_name: str = typer.Option(None, help="Project name (default: current directory)."),
+    registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
+) -> None:
+    """Initialize a new MoiraWeave project workspace.
+
+    Creates moiraweave.yaml, .env, and full directory structure (pipelines/, steps/, tasks/, deploy/).
+    """
+    _run_project_init(non_interactive, project_name, registry)
+
+
+@project_app.command("init")
+def project_init(
+    non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
+    project_name: str = typer.Option(None, help="Project name (default: current directory)."),
+    registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
+) -> None:
+    """Initialize a new MoiraWeave project workspace.
+
+    This command mirrors ``moira init`` and is the preferred CLI-first entry point.
+
+    :param non_interactive: Disable prompts and use defaults.
+    :param project_name: Optional project name.
+    :param registry: Optional OCI registry.
+    """
+    _run_project_init(non_interactive, project_name, registry)
 
 
 @task_app.command("list")
@@ -750,23 +865,83 @@ def step_add(
 
     _render_header(f"Add Official Step: {step_name}")
 
-    # For now, show placeholder implementation
-    # In full implementation, this would:
-    # 1. Fetch catalog metadata
-    # 2. Validate compatibility
-    # 3. Create step entry in steps/
-    console.print(
-        f"[cyan]Will add official step:[/cyan] {step_name}@{step_version}"
-    )
-    console.print(f"[cyan]Registry:[/cyan] {config.registry}")
-    console.print("[yellow]Note: This feature requires catalog index infrastructure (Phase 2)[/yellow]")
+    catalog_name, catalog = _load_catalog_document(repo_root)
+    catalog_steps = list(catalog.get("steps", []))
+    candidates = [
+        dict(step)
+        for step in catalog_steps
+        if str(step.get("name", "")) == step_name
+    ]
+    if not candidates:
+        _exit_with_error(f"Step not found in catalog {catalog_name}: {step_name}")
 
-    # Placeholder: show what would happen
+    selected: dict[str, Any]
+    if step_version == "latest":
+        selected = sorted(
+            candidates,
+            key=lambda item: _semver_key(str(item.get("version", "0.0.0"))),
+            reverse=True,
+        )[0]
+    else:
+        selected = next(
+            (
+                item
+                for item in candidates
+                if str(item.get("version", "")) == step_version
+            ),
+            {},
+        )
+        if not selected:
+            _exit_with_error(
+                f"Version {step_version} not found for step {step_name} in {catalog_name}"
+            )
+
+    selected_version = str(selected.get("version", "0.1.0"))
+    step_task = str(selected.get("task", ""))
+    image_uri = str(selected.get("image_uri", ""))
+    if not image_uri:
+        _exit_with_error(f"Catalog entry for {step_name} has no image_uri")
+
     materialized_path = repo_root / config.steps_dir / f"{step_name}-catalog"
-    console.print(f"\n[cyan]Would create:[/cyan]")
-    console.print(f"  {materialized_path}/")
-    console.print(f"    step.yaml (reference to official image)")
-    console.print(f"    schema.json (local cache of official contract)")
+    if materialized_path.exists():
+        _exit_with_error(f"Step already exists locally: {materialized_path.name}")
+    materialized_path.mkdir(parents=True, exist_ok=False)
+
+    task_contract = dict(selected.get("task_contract", {}))
+    step_yaml = {
+        "name": step_name,
+        "version": selected_version,
+        "task": step_task,
+        "description": f"Catalog reference to {step_name}@{selected_version}",
+        "image": image_uri,
+        "source_catalog": catalog_name,
+        "source_uri": config.catalogs[catalog_name].uri,
+        "inputs": list(task_contract.get("inputs", [])),
+        "outputs": list(task_contract.get("outputs", [])),
+        "env": {},
+    }
+    (materialized_path / "step.yaml").write_text(
+        yaml.safe_dump(step_yaml, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    schema_payload = {
+        "task": step_task,
+        "version": selected_version,
+        "inputs": list(task_contract.get("inputs", [])),
+        "outputs": list(task_contract.get("outputs", [])),
+    }
+    (materialized_path / "schema.json").write_text(
+        json.dumps(schema_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    console.print(
+        f"[green]Added official step:[/green] {step_name}@{selected_version}"
+    )
+    console.print(f"[cyan]Catalog:[/cyan] {catalog_name}")
+    console.print(f"[cyan]Image:[/cyan] {image_uri}")
+    console.print(f"[cyan]Created:[/cyan] {materialized_path}")
 
 
 @pipeline_app.command("list")
