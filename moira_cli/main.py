@@ -26,6 +26,7 @@ from moira_cli.io import (
     discover_tasks,
     ensure_local_env,
     load_moiraweave_config,
+    scaffold_workspace_structure,
     write_default_moiraweave_config,
 )
 
@@ -279,51 +280,72 @@ def _bump_semver(version: str, kind: str) -> str:
 @app.command()
 def init(
     non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
+    project_name: str = typer.Option(None, help="Project name (default: current directory)."),
+    registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
 ) -> None:
-    """Initialize or validate moiraweave.yaml in the current repository."""
+    """Initialize a new MoiraWeave project workspace.
+
+    Creates moiraweave.yaml, .env, and full directory structure (pipelines/, steps/, tasks/, deploy/).
+    """
     repo_root = _repo_root()
     config_path = repo_root / "moiraweave.yaml"
 
-    _render_header("MoiraWeave Init")
+    _render_header("MoiraWeave Project Init")
 
-    if not config_path.exists():
+    if config_path.exists():
+        config = load_moiraweave_config(repo_root)
+        console.print(f"[yellow]Project already initialized: {config.name}[/yellow]")
+        prereqs = check_prereqs()
+        table = Table(title="Environment prerequisites")
+        table.add_column("Check")
+        table.add_column("Status")
+        for name, ok in prereqs.items():
+            table.add_row(name, "[green]ok[/green]" if ok else "[red]missing[/red]")
+        table.add_row("config", f"[green]{config.name}[/green]")
+        console.print(table)
+        return
+
+    # Determine project name
+    if project_name is None:
         if non_interactive:
             project_name = repo_root.name
-            registry = "ghcr.io/jgallego9"
         else:
             project_name = (
                 questionary.text("Project name", default=repo_root.name).ask()
                 or repo_root.name
             )
+
+    # Determine registry
+    if registry is None:
+        if non_interactive:
+            registry = "ghcr.io/myorg"
+        else:
             registry = (
-                questionary.text("Registry", default="ghcr.io/jgallego9").ask()
-                or "ghcr.io/jgallego9"
+                questionary.text("OCI registry (e.g., ghcr.io/myorg)", default="ghcr.io/myorg").ask()
+                or "ghcr.io/myorg"
             )
 
-        write_default_moiraweave_config(repo_root, project_name, registry)
-        ensure_local_env(repo_root)
-        console.print("[green]Created moiraweave.yaml and .env[/green]")
-    else:
-        config = load_moiraweave_config(repo_root)
-        prereqs = check_prereqs()
+    # Write config and scaffold structure
+    write_default_moiraweave_config(repo_root, project_name, registry)
+    ensure_local_env(repo_root)
+    scaffold_workspace_structure(repo_root)
 
-        table = Table(title="Environment prerequisites")
-        table.add_column("Check")
-        table.add_column("Status")
-
-        for name, ok in prereqs.items():
-            table.add_row(name, "[green]ok[/green]" if ok else "[red]missing[/red]")
-
-        table.add_row("config", f"[green]{config.name}[/green]")
-        console.print(table)
+    console.print("[green]✓ Created moiraweave.yaml[/green]")
+    console.print("[green]✓ Created .env with JWT secrets[/green]")
+    console.print("[green]✓ Created directory structure:[/green]")
+    console.print("  - pipelines/  (your pipeline definitions)")
+    console.print("  - steps/       (your custom step implementations)")
+    console.print("  - tasks/       (your custom task contracts)")
+    console.print("  - deploy/      (deployment configuration)")
 
     console.print(
         Panel(
             "Next steps:\n"
-            "1) moira task list\n"
-            "2) moira step list\n"
-            "3) moira pipeline list",
-            title="Ready",
+            "1) moira step new <task> <impl>  — Scaffold a new step\n"
+            "2) moira step add --from-catalog text-embed-fastembed  — Add official step\n"
+            "3) moira pipeline new <name>  — Scaffold a new pipeline\n"
+            "4) moira pipeline dev <name>  — Test your pipeline locally",
+            title="Ready to start",
         )
     )
 
@@ -702,6 +724,49 @@ def step_show(
     base = url or _infer_step_endpoint(name)
     data = _request_json("GET", f"{base}/v2/models/{name}")
     console.print(Syntax(json.dumps(data, indent=2), "json"))
+
+
+@step_app.command("add")
+def step_add(
+    step_ref: str = typer.Option(
+        ..., "--from-catalog", help="Step reference (format: step-name[@version])."
+    ),
+) -> None:
+    """Add an official step from the catalog to your workspace.
+
+    Materializes a reference to an official step as a local materialized step entry.
+
+    :param step_ref: Step reference in format: name or name@version
+    """
+    repo_root = _repo_root()
+    config = load_moiraweave_config(repo_root)
+
+    # Parse step reference
+    if "@" in step_ref:
+        step_name, step_version = step_ref.rsplit("@", 1)
+    else:
+        step_name = step_ref
+        step_version = "latest"
+
+    _render_header(f"Add Official Step: {step_name}")
+
+    # For now, show placeholder implementation
+    # In full implementation, this would:
+    # 1. Fetch catalog metadata
+    # 2. Validate compatibility
+    # 3. Create step entry in steps/
+    console.print(
+        f"[cyan]Will add official step:[/cyan] {step_name}@{step_version}"
+    )
+    console.print(f"[cyan]Registry:[/cyan] {config.registry}")
+    console.print("[yellow]Note: This feature requires catalog index infrastructure (Phase 2)[/yellow]")
+
+    # Placeholder: show what would happen
+    materialized_path = repo_root / config.steps_dir / f"{step_name}-catalog"
+    console.print(f"\n[cyan]Would create:[/cyan]")
+    console.print(f"  {materialized_path}/")
+    console.print(f"    step.yaml (reference to official image)")
+    console.print(f"    schema.json (local cache of official contract)")
 
 
 @pipeline_app.command("list")

@@ -26,6 +26,21 @@ class EnvironmentConfig(BaseModel):
     argocd_app: str | None = None
 
 
+class CatalogSourceConfig(BaseModel):
+    """Official step catalog source.
+
+    :param name: Catalog name (e.g., "moiraweave-official").
+    :param uri: Git or registry URI for the catalog.
+    :param version_constraint: Optional semver constraint (e.g., "^1.0.0").
+    :param enabled: Whether this catalog is enabled for step discovery.
+    """
+
+    name: str
+    uri: str = "https://github.com/moiraweave-labs/moiraweave-steps"
+    version_constraint: str = "*"
+    enabled: bool = True
+
+
 class MoiraWeaveConfig(BaseModel):
     """Root moiraweave.yaml model.
 
@@ -35,11 +50,15 @@ class MoiraWeaveConfig(BaseModel):
     :param pipelines_dir: Directory containing pipeline definitions.
     :param steps_dir: Directory containing step packages.
     :param tasks_dir: Directory containing task schemas.
+    :param catalogs: Named official step catalogs (e.g., moiraweave-official).
+    :param runtime_version: Pinned runtime version for compatibility checks.
     """
 
     name: str
     registry: str
     environments: dict[str, EnvironmentConfig] = Field(default_factory=dict)
+    catalogs: dict[str, CatalogSourceConfig] = Field(default_factory=dict)
     pipelines_dir: str = "pipelines"
     steps_dir: str = "steps"
     tasks_dir: str = "tasks"
+    runtime_version: str = "0.1.0"

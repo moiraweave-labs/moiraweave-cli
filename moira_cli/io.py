@@ -76,21 +76,28 @@ def write_default_moiraweave_config(repo_root: Path, name: str, registry: str) -
     config = {
         "name": name,
         "registry": registry,
+        "runtime_version": "0.1.0",
+        "catalogs": {
+            "moiraweave-official": {
+                "name": "moiraweave-official",
+                "uri": "https://github.com/moiraweave-labs/moiraweave-steps",
+                "enabled": True,
+            }
+        },
         "environments": {
             "local": {"context": "docker-compose", "values": ".env"},
             "dev": {
                 "context": "kubernetes",
                 "kubeconfig": "~/.kube/config",
                 "namespace": "moiraweave-dev",
-                "helm_values": "infra/helm/moiraweave/values-dev.yaml",
+                "helm_values": "deploy/values-dev.yaml",
                 "deploy": "helm",
             },
             "prod": {
                 "context": "kubernetes",
                 "namespace": "moiraweave-prod",
-                "helm_values": "infra/helm/moiraweave/values.yaml",
-                "deploy": "argocd",
-                "argocd_app": "moiraweave-prod",
+                "helm_values": "deploy/values-prod.yaml",
+                "deploy": "helm",
             },
         },
         "pipelines_dir": "pipelines",
@@ -99,6 +106,60 @@ def write_default_moiraweave_config(repo_root: Path, name: str, registry: str) -
     }
     target = repo_root / "moiraweave.yaml"
     target.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
+def scaffold_workspace_structure(repo_root: Path) -> None:
+    """Create complete workspace directory structure.
+
+    Creates:
+    - pipelines/ (empty, ready for pipeline definitions)
+    - steps/ (empty, ready for custom step implementations)
+    - tasks/ (empty, ready for custom task schemas)
+    - deploy/ (with values files for local/dev/prod environments)
+    - .gitignore (with sensible defaults)
+
+    :param repo_root: Repository root path.
+    """
+    dirs = [
+        repo_root / "pipelines",
+        repo_root / "steps",
+        repo_root / "tasks",
+        repo_root / "deploy",
+    ]
+    for d in dirs:
+        d.mkdir(exist_ok=True)
+        (d / ".gitkeep").touch()
+
+    # Create .gitignore if it doesn't exist
+    gitignore_path = repo_root / ".gitignore"
+    if not gitignore_path.exists():
+        gitignore_content = """.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+"""
+        gitignore_path.write_text(gitignore_content, encoding="utf-8")
+
+    # Create deploy values files
+    for env in ["local", "dev", "prod"]:
+        values_file = repo_root / "deploy" / f"values-{env}.yaml"
+        if not values_file.exists():
+            values_file.write_text(
+                f"# Deployment values for {env} environment\n"
+                f"# Override or extend defaults from moiraweave-core\n"
+                f"environment: {env}\n",
+                encoding="utf-8",
+            )
 
 
 def ensure_local_env(repo_root: Path) -> None:
