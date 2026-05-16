@@ -2,6 +2,7 @@
 name = "moiraweave-cli"
 version = "0.1.0"
 description = "MoiraWeave developer CLI"
+readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "docker>=7.1",
@@ -24,6 +25,7 @@ package = true
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
+    "pre-commit>=4.0.0",
     "pytest>=9.0.3",
     "ruff>=0.15.13",
     "types-pyyaml>=6.0.12.20260510",

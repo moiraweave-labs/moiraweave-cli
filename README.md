@@ -5,7 +5,7 @@ Developer CLI for the MoiraWeave platform. Entry point for creating and managing
 ## Install
 
 ```bash
-uv tool install git+https://github.com/moiraweave-labs/moiraweave-cli
+uv tool install moiraweave-cli
 ```
 
 ## Quick Start: Create Your First Project

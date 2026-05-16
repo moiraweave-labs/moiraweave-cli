@@ -39,6 +39,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      - name: Pre-commit Ruff lint
+        run: uv run pre-commit run ruff --all-files --show-diff-on-failure
+
+      - name: Pre-commit Ruff format
+        run: uv run pre-commit run ruff-format --all-files --show-diff-on-failure
+
       - name: Ruff lint
         run: uv run ruff check moira_cli tests
 

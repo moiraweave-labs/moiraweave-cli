@@ -90,7 +90,15 @@ class TestCLIPipelineValidation:
         workspace.mkdir(parents=True, exist_ok=True)
 
         init_result = subprocess.run(
-            [*cli_command, "init", "--non-interactive", "--project-name", "smoke", "--registry", "ghcr.io/test"],
+            [
+                *cli_command,
+                "init",
+                "--non-interactive",
+                "--project-name",
+                "smoke",
+                "--registry",
+                "ghcr.io/test",
+            ],
             cwd=workspace,
             capture_output=True,
             text=True,
