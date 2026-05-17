@@ -420,26 +420,23 @@ def task_show(name: str = typer.Argument(..., help="Task name.")) -> None:
     Examples:
         moira task show text-embed
     """
+    from moira_cli.commands.task import TaskCommand
+    from moira_cli.presenters.task import TaskPresenter
+    
     repo_root = _repo_root()
-    tasks_root, _, _ = _default_dirs(repo_root)
-    schema_path = tasks_root / name / "schema.json"
-    if not schema_path.exists():
-        _exit_with_error(f"Task not found: {name}", hint=f"Run 'moira task list' to see available tasks")
-
-    schema = _read_json_file(schema_path)
-    steps = [step for step in discover_steps(repo_root) if step.task == name]
-
-    console.print(Syntax(json.dumps(schema, indent=2), "json"))
-
-    table = Table(title="Compatible steps")
-    table.add_column("Step")
-    table.add_column("Version")
-    if steps:
-        for step in steps:
-            table.add_row(step.name, step.version)
+    cmd = TaskCommand(repo_root)
+    result = cmd.execute(action="show", task_name=name)
+    
+    if result.get("status") == "success":
+        presenter = TaskPresenter()
+        presenter.present_show(
+            name,
+            result.get("schema", {}),
+            result.get("inputs", []),
+            result.get("outputs", []),
+        )
     else:
-        table.add_row("-", "-")
-    console.print(table)
+        ui.error(result.get("message", "Failed to show task"), hint="Run 'moira task list' to see available tasks")
 
 
 @task_app.command("new")
@@ -452,13 +449,10 @@ def task_new(
     :param name: New task name.
     :param non_interactive: Disable prompts and use defaults.
     """
+    from moira_cli.commands.task import TaskCommand
+    from moira_cli.presenters.task import TaskPresenter
+    
     repo_root = _repo_root()
-    tasks_root, _, _ = _default_dirs(repo_root)
-    task_dir = tasks_root / name
-    schema_path = task_dir / "schema.json"
-    if schema_path.exists():
-        _exit_with_error(f"Task already exists: {name}")
-
     description = f"Task contract for {name}"
     input_name = "input"
     output_name = "output"
@@ -477,31 +471,18 @@ def task_new(
             or output_name
         )
 
-    task_dir.mkdir(parents=True, exist_ok=True)
-    schema = {
-        "task": name,
-        "version": "1.0",
-        "description": description,
-        "inputs": [
-            {
-                "name": input_name,
-                "datatype": "BYTES",
-                "shape": [1],
-                "description": "Primary input",
-                "required": True,
-            }
-        ],
-        "outputs": [
-            {
-                "name": output_name,
-                "datatype": "BYTES",
-                "shape": [1],
-                "description": "Primary output",
-            }
-        ],
-    }
-    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
-    console.print(f"[green]Created {schema_path}[/green]")
+    cmd = TaskCommand(repo_root)
+    result = cmd.execute(
+        action="new",
+        task_name=name,
+        description=description,
+    )
+    
+    if result.get("status") == "success":
+        presenter = TaskPresenter()
+        presenter.present_new(name, result.get("created", {}))
+    else:
+        ui.error(result.get("message", "Failed to create task"))
 
 
 @step_app.command("list")
@@ -755,38 +736,19 @@ def step_push(
         moira step push text-embed-fastembed
         moira step push text-embed-fastembed --bump patch
     """
+    from moira_cli.commands.step import StepCommand
+    from moira_cli.presenters.step import StepPresenter
+    
     repo_root = _repo_root()
-    _, steps_root, _ = _default_dirs(repo_root)
-    step_root = steps_root / name
-    version_file = step_root / "VERSION"
-    if not version_file.exists():
-        _exit_with_error(f"VERSION not found for step: {name}")
-
-    version = version_file.read_text(encoding="utf-8").strip()
-    if bump:
-        if bump not in {"patch", "minor", "major"}:
-            _exit_with_error(f"Invalid bump: {bump}", hint="Must be one of: patch, minor, major")
-        version = _bump_semver(version, bump)
-        version_file.write_text(version + "\n", encoding="utf-8")
-        ui.success(f"Updated VERSION to {version}")
-
-    config = load_moiraweave_config(repo_root)
-    image = f"{config.registry.rstrip('/')}/{name}:v{version}"
-
-    with Progress(
-        SpinnerColumn(style="cyan"),
-        TextColumn("{task.description}", style="dim"),
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task(f"Pushing {image}...", total=None)
-        try:
-            _run_command(["docker", "push", image], cwd=repo_root)
-            progress.stop()
-        except typer.Exit:
-            progress.stop()
-            raise
-
-    ui.success(f"Pushed image: {image}")
+    cmd = StepCommand(repo_root)
+    result = cmd.execute(action="push", step_name=name, bump=bump)
+    
+    if result.get("status") == "success":
+        presenter = StepPresenter()
+        push_result = result.get("push_result", {})
+        presenter.present_push_result(name, push_result)
+    else:
+        ui.error(result.get("message", "Failed to push step"))
 
 
 @step_app.command("show")
