@@ -1,61 +1,80 @@
 # MoiraWeave CLI
 
-Developer CLI for the MoiraWeave platform. Entry point for creating and managing MoiraWeave projects.
+[![CI](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/ci.yml)
+[![Release Please](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/release.yml)
+[![Publish to PyPI](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/publish.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/publish.yml)
+[![PyPI](https://img.shields.io/pypi/v/moiraweave-cli)](https://pypi.org/project/moiraweave-cli/)
+[![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## Install
+Developer CLI for creating, running, and operating MoiraWeave workspaces.
+
+## Why this repository exists
+
+`moiraweave-cli` is the entry point for platform users. It provides a single command surface for:
+
+- workspace initialization
+- step scaffolding and catalog integration
+- pipeline creation and validation
+- local runtime orchestration
+- deployment commands and job inspection
+
+## Installation
 
 ```bash
 uv tool install moiraweave-cli
-```
-
-## Quick Start: Create Your First Project
-
-```bash
-# Initialize a new MoiraWeave workspace
-moira project init
-
-# Scaffold your first custom step
-moira step new my-task my-impl
-
-# Create a pipeline
-moira pipeline new my-pipeline
-
-# Run locally
-moira pipeline dev my-pipeline
-```
-
-## Usage
-
-```bash
 moira --help
 ```
 
-The CLI covers:
-- **Project initialization**: `moira project init` to bootstrap your workspace
-- **Step management**: create custom steps and integrate official steps from catalog
-- **Pipeline authoring**: define, validate, and execute pipelines
-- **Deployment**: local Docker Compose or Kubernetes via Helm
-- **Job inspection**: monitor running jobs and results
+## Quickstart
 
-## Where Your Code Lives
+```bash
+# 1) Initialize a workspace
+moira project init
+cd my-project-moira
 
-You own and manage your project code in your own repository, not in MoiraWeave upstream repos:
+# 2) Create a custom step
+moira step new my-task my-impl
 
+# 3) Create and validate a pipeline
+moira pipeline new my-pipeline
+moira pipeline validate my-pipeline
+
+# 4) Run locally
+moira pipeline dev my-pipeline
 ```
+
+## Workspace ownership model
+
+Your product code lives in your own workspace repository, not in upstream MoiraWeave repos:
+
+```text
 your-company-moira/
-  moiraweave.yaml          # Your project config
-  .env                     # Your environment secrets
-  pipelines/               # Your pipeline definitions
-  steps/                   # Your custom steps
-  tasks/                   # Your task contracts (optional)
-  deploy/                  # Your deployment overlays
+  moiraweave.yaml
+  .env
+  pipelines/
+  steps/
+  tasks/
+  deploy/
 ```
 
-The CLI scaffolds this structure and manages it for you.
+## Development
 
-## Companion Repositories (For Reference Only)
+```bash
+uv sync --frozen
+uv run ruff check moira_cli tests
+uv run mypy moira_cli
+uv run pytest
+```
 
-- [moiraweave-core](https://github.com/moiraweave-labs/moiraweave-core): Runtime services and infrastructure templates. You do not need to clone this for normal usage.
-- [moiraweave-steps](https://github.com/moiraweave-labs/moiraweave-steps): Official step catalog (optional). You consume steps by reference and version, not by cloning.
-- [moiraweave-docs](https://github.com/moiraweave-labs/moiraweave-docs): Documentation.
-- [.github](https://github.com/moiraweave-labs/.github): Org-wide templates and policies.
+## Releases
+
+- `release.yml` manages automated versioning/changelog updates via Release Please.
+- `publish.yml` publishes release artifacts to PyPI.
+
+## Related repositories
+
+- [moiraweave-core](https://github.com/moiraweave-labs/moiraweave-core): runtime services and infrastructure
+- [moiraweave-steps](https://github.com/moiraweave-labs/moiraweave-steps): official step catalog
+- [moiraweave-docs](https://github.com/moiraweave-labs/moiraweave-docs): documentation site
+- [.github](https://github.com/moiraweave-labs/.github): org-wide policies and templates
