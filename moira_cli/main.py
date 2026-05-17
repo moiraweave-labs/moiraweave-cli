@@ -37,7 +37,14 @@ step_app = typer.Typer(help="Manage steps")
 pipeline_app = typer.Typer(help="Manage pipelines")
 models_app = typer.Typer(help="Manage model cache and readiness")
 job_app = typer.Typer(help="Inspect detached jobs")
+from moira_cli.commands import flow as flow_command_module
 
+# Registrar el comando 'flow' en el CLI principal
+app.add_typer(
+    flow_command_module.app,
+    name="flow",
+    help="Muestra el flujo del workspace como árbol visual",
+)
 app.add_typer(task_app, name="task")
 app.add_typer(step_app, name="step")
 app.add_typer(pipeline_app, name="pipeline")
