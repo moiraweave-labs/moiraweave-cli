@@ -100,11 +100,18 @@ Your product code lives in your own workspace repository, not in upstream MoiraW
 your-company-moira/
   moiraweave.yaml
   .env
-  pipelines/
-  steps/
-  tasks/
-  deploy/
+  src/                 # your product code
+  notebooks/           # optional user assets
+  .moiraweave/
+    pipelines/
+    steps/
+    tasks/
+    deploy/
 ```
+
+MoiraWeave keeps generated runtime scaffolding under `.moiraweave/` to avoid mixing
+platform artifacts with user application code, following the same hidden-workspace
+pattern used by modern developer tooling.
 
 ## Development
 

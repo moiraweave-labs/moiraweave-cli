@@ -55,10 +55,10 @@ class ProjectHandler(BaseHandler):
             "config_path": config_path,
             "env_path": self.repo_root / ".env",
             "directories": [
-                self.repo_root / "pipelines",
-                self.repo_root / "steps",
-                self.repo_root / "tasks",
-                self.repo_root / "deploy",
+                self.repo_root / ".moiraweave" / "pipelines",
+                self.repo_root / ".moiraweave" / "steps",
+                self.repo_root / ".moiraweave" / "tasks",
+                self.repo_root / ".moiraweave" / "deploy",
             ],
         }
 
