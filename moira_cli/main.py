@@ -664,14 +664,19 @@ def step_test(name: str = typer.Argument(..., help="Step directory name.")) -> N
 
     :param name: Step directory name.
     """
+    from moira_cli.commands.step import StepCommand
+    from moira_cli.presenters.step import StepPresenter
+    
     repo_root = _repo_root()
-    _, steps_root, _ = _default_dirs(repo_root)
-    tests_root = steps_root / name / "tests"
-    if not tests_root.exists():
-        _exit_with_error(f"Step tests not found: {tests_root}")
-    output = _run_command(["uv", "run", "pytest", str(tests_root), "-q"], cwd=repo_root)
-    if output:
-        console.print(output)
+    cmd = StepCommand(repo_root)
+    result = cmd.execute(action="test", step_name=name)
+    
+    if result.get("status") == "success":
+        presenter = StepPresenter()
+        test_result = result.get("test_result", {})
+        presenter.present_test_result(name, test_result)
+    else:
+        ui.error(result.get("message", "Failed to test step"))
 
 
 @step_app.command("build")
@@ -1217,32 +1222,18 @@ def models_prefetch(name: str = typer.Argument(..., help="Pipeline name.")) -> N
 
     :param name: Pipeline name.
     """
+    from moira_cli.commands.models import ModelsCommand
+    from moira_cli.presenters.models import ModelsPresenter
+    
     repo_root = _repo_root()
-    step_defs = _pipeline_step_defs(repo_root, name)
-
-    with Progress(
-        SpinnerColumn(), TextColumn("{task.description}"), transient=True
-    ) as progress:
-        for step in step_defs:
-            step_id = str(step.get("id", "step"))
-            url = str(step.get("url", "")).rstrip("/")
-            if not url:
-                continue
-            task_id = progress.add_task(f"Checking {step_id}", total=None)
-            ready_url = f"{url}/v2/health/ready"
-            for _ in range(20):
-                try:
-                    with httpx.Client(timeout=3.0) as client:
-                        response = client.get(ready_url)
-                        if response.status_code == 200:
-                            progress.update(task_id, description=f"{step_id} ready")
-                            break
-                except Exception:
-                    pass
-                time.sleep(1)
-            progress.remove_task(task_id)
-
-    console.print(f"[green]Model prefetch checks completed for pipeline {name}[/green]")
+    cmd = ModelsCommand(repo_root, api_url=DEFAULT_API_URL)
+    result = cmd.execute(action="prefetch", pipeline_name=name)
+    
+    if result.get("status") == "success":
+        presenter = ModelsPresenter()
+        presenter.present_prefetch(name, result.get("prefetch", {}))
+    else:
+        ui.error(result.get("message", "Failed to prefetch models"))
 
 
 @models_app.command("status")
@@ -1251,30 +1242,18 @@ def models_status(name: str = typer.Argument(..., help="Pipeline name.")) -> Non
 
     :param name: Pipeline name.
     """
+    from moira_cli.commands.models import ModelsCommand
+    from moira_cli.presenters.models import ModelsPresenter
+    
     repo_root = _repo_root()
-    step_defs = _pipeline_step_defs(repo_root, name)
-
-    table = Table(title=f"Model status for {name}")
-    table.add_column("Step")
-    table.add_column("Model")
-    table.add_column("Status")
-
-    for step in step_defs:
-        step_id = str(step.get("id", "step"))
-        url = str(step.get("url", "")).rstrip("/")
-        if not url:
-            table.add_row(step_id, "-", "missing url")
-            continue
-
-        metadata_url = f"{url}/v2/models/{step_id}"
-        try:
-            data = _request_json("GET", metadata_url)
-            model_name = str(data.get("name", step_id))
-            table.add_row(step_id, model_name, "ready")
-        except typer.Exit:
-            table.add_row(step_id, "-", "unreachable")
-
-    console.print(table)
+    cmd = ModelsCommand(repo_root, api_url=DEFAULT_API_URL)
+    result = cmd.execute(action="status", pipeline_name=name)
+    
+    if result.get("status") == "success":
+        presenter = ModelsPresenter()
+        presenter.present_status(name, result.get("model_status", {}))
+    else:
+        ui.error(result.get("message", "Failed to get model status"))
 
 
 @models_app.command("clear")
@@ -1283,23 +1262,26 @@ def models_clear(name: str = typer.Argument(..., help="Pipeline name.")) -> None
 
     :param name: Pipeline name.
     """
+    from moira_cli.commands.models import ModelsCommand
+    from moira_cli.presenters.models import ModelsPresenter
+    
     repo_root = _repo_root()
-    cache_path = repo_root / ".cache" / "moiraweave" / "models" / name
-
-    if not cache_path.exists():
-        console.print(f"[yellow]No local cache found at {cache_path}[/yellow]")
-        return
-
     confirmed = questionary.confirm(
-        f"Delete local cache directory {cache_path}?",
+        f"Delete local cache directory for {name}?",
         default=False,
     ).ask()
     if not confirmed:
-        console.print("Aborted.")
+        ui.info("Aborted.")
         return
 
-    _run_command(["rm", "-rf", str(cache_path)], cwd=repo_root)
-    console.print(f"[green]Deleted {cache_path}[/green]")
+    cmd = ModelsCommand(repo_root, api_url=DEFAULT_API_URL)
+    result = cmd.execute(action="clear", pipeline_name=name)
+    
+    if result.get("status") == "success":
+        presenter = ModelsPresenter()
+        presenter.present_clear(name, result.get("clear_result", {}))
+    else:
+        ui.error(result.get("message", "Failed to clear cache"))
 
 
 @job_app.command("status")
@@ -1312,8 +1294,17 @@ def job_status(
     :param job_id: Job identifier.
     :param api_url: API base URL.
     """
-    data = _request_json("GET", f"{api_url}/jobs/{job_id}")
-    console.print(Syntax(json.dumps(data, indent=2), "json"))
+    from moira_cli.commands.job import JobCommand
+    from moira_cli.presenters.job import JobPresenter
+    
+    cmd = JobCommand(api_url=api_url)
+    result = cmd.execute(action="status", job_id=job_id)
+    
+    if result.get("status") == "success":
+        presenter = JobPresenter()
+        presenter.present_status(job_id, result.get("job_status", {}))
+    else:
+        ui.error(result.get("message", "Failed to get job status"))
 
 
 @job_app.command("result")
@@ -1326,16 +1317,17 @@ def job_result(
     :param job_id: Job identifier.
     :param api_url: API base URL.
     """
-    urls = [f"{api_url}/jobs/{job_id}/result", f"{api_url}/jobs/{job_id}"]
-    for url in urls:
-        try:
-            data = _request_json("GET", url)
-            result = data.get("result", data)
-            console.print(Syntax(json.dumps(result, indent=2), "json"))
-            return
-        except typer.Exit:
-            continue
-    _exit_with_error(f"No result endpoint available for job {job_id}")
+    from moira_cli.commands.job import JobCommand
+    from moira_cli.presenters.job import JobPresenter
+    
+    cmd = JobCommand(api_url=api_url)
+    result = cmd.execute(action="result", job_id=job_id)
+    
+    if result.get("status") == "success":
+        presenter = JobPresenter()
+        presenter.present_result(job_id, result.get("result", {}))
+    else:
+        ui.error(result.get("message", "Failed to get job result"))
 
 
 if __name__ == "__main__":
