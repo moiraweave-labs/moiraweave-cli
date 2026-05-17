@@ -19,6 +19,7 @@ from rich.syntax import Syntax
 
 from moira_cli.commands import find_repo_root
 from moira_cli.commands.project import ProjectInitCommand
+from moira_cli.commands import flow as flow_command_module
 from moira_cli.io import (
     load_moiraweave_config,
 )
@@ -34,10 +35,11 @@ app = typer.Typer(
 )
 task_app = typer.Typer(help="Manage tasks")
 step_app = typer.Typer(help="Manage steps")
+
 pipeline_app = typer.Typer(help="Manage pipelines")
 models_app = typer.Typer(help="Manage model cache and readiness")
 job_app = typer.Typer(help="Inspect detached jobs")
-from moira_cli.commands import flow as flow_command_module
+
 
 # Registrar el comando 'flow' en el CLI principal
 app.add_typer(

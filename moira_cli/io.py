@@ -173,6 +173,9 @@ def ensure_local_env(repo_root: Path) -> None:
 
     secret = secrets.token_urlsafe(32)
     content = (
+        "# Archivo generado automáticamente por moiraweave init\n"
+        "# Los valores aquí son seguros para desarrollo local, pero deben revisarse en producción.\n"
+        "# No compartas este archivo ni lo subas a control de versiones.\n"
         f"JWT_SECRET_KEY={secret}\n"
         "JWT_ALGORITHM=HS256\n"
         "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30\n"
