@@ -158,7 +158,10 @@ class TestCLIErrorMessages:
             text=True,
         )
         error_text = result.stdout + result.stderr
-        assert "task schema not found" in error_text.lower() or "task" in error_text.lower()
+        assert (
+            "task schema not found" in error_text.lower()
+            or "task" in error_text.lower()
+        )
 
 
 class TestCLIDefaults:

@@ -43,9 +43,7 @@ class BaseCommand(ABC):
         self.ui = get_ui()
 
     @abstractmethod
-    def execute(
-        self, action: str, *args: Any, **kwargs: Any
-    ) -> dict[str, Any]:
+    def execute(self, action: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
         """Execute the command.
 
         :param action: Command action to execute.

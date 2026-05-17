@@ -523,7 +523,6 @@ def step_new(
     app_root = step_root / "app"
     tests_root = step_root / "tests"
 
-
     if step_root.exists():
         confirmed = questionary.confirm(
             f"El paso '{step_name}' ya existe. ¿Sobrescribir?",
@@ -534,6 +533,7 @@ def step_new(
             return
         # Borrado seguro del directorio existente
         import shutil
+
         shutil.rmtree(step_root)
 
     app_root.mkdir(parents=True, exist_ok=True)
@@ -867,6 +867,7 @@ def step_add(
             ui.info("Operación cancelada por el usuario.")
             return
         import shutil
+
         shutil.rmtree(materialized_path)
     materialized_path.mkdir(parents=True, exist_ok=False)
 
@@ -946,6 +947,7 @@ def pipeline_new(name: str = typer.Argument(..., help="Pipeline name.")) -> None
             ui.info("Operación cancelada por el usuario.")
             return
         import shutil
+
         shutil.rmtree(pipelines_root / name)
 
     cmd = PipelineCommand(repo_root)

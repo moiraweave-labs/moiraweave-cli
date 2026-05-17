@@ -119,7 +119,7 @@ class ModelsHandler(BaseHandler):
 
         :param pipeline_name: Pipeline name.
         :returns: Clear result dict.
-        
+
         NOTA: La confirmación interactiva debe hacerse en el comando Typer, no aquí.
         """
         cache_path = self.repo_root / ".cache" / "moiraweave" / "models" / pipeline_name
@@ -132,6 +132,7 @@ class ModelsHandler(BaseHandler):
 
         try:
             import shutil
+
             shutil.rmtree(cache_path)
             return {
                 "status": "cleared",
