@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/moiraweave-labs/moiraweave-cli/compare/v0.2.0...v0.3.0) (2026-05-17)
+
+
+### Features
+
+* **cli:** comando 'flow' para visualizar árbol del workspace ([16f03d2](https://github.com/moiraweave-labs/moiraweave-cli/commit/16f03d2889711dad4b2cbe083af0ae3b16df4d06))
+
+
+### Documentation
+
+* **env:** añade comentarios explicativos al .env generado ([d68c227](https://github.com/moiraweave-labs/moiraweave-cli/commit/d68c227b4e56ef917aacbc8932d60528f4d87fff))
+
 ## [0.2.0](https://github.com/moiraweave-labs/moiraweave-cli/compare/v0.1.0...v0.2.0) (2026-05-17)
 
 
