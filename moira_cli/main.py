@@ -399,17 +399,18 @@ def init(
 @task_app.command("list")
 def task_list() -> None:
     """List all registered tasks from tasks/*/schema.json."""
+    from moira_cli.commands.task import TaskCommand
+    from moira_cli.presenters.task import TaskPresenter
+    
     repo_root = _repo_root()
-    tasks = discover_tasks(repo_root)
-
-    table = Table(title="Tasks")
-    table.add_column("Task")
-    table.add_column("Description")
-
-    for task in tasks:
-        table.add_row(task.name, task.description)
-
-    console.print(table)
+    cmd = TaskCommand(repo_root)
+    result = cmd.execute(action="list")
+    
+    if result.get("status") == "success":
+        presenter = TaskPresenter()
+        presenter.present_list(result.get("tasks", []))
+    else:
+        ui.error(result.get("message", "Failed to list tasks"))
 
 
 @task_app.command("show")
@@ -506,27 +507,18 @@ def task_new(
 @step_app.command("list")
 def step_list() -> None:
     """List all steps discovered from steps/*/step.yaml."""
+    from moira_cli.commands.step import StepCommand
+    from moira_cli.presenters.step import StepPresenter
+    
     repo_root = _repo_root()
-    steps = discover_steps(repo_root)
-
-    table = Table(title="Steps")
-    table.add_column("Step")
-    table.add_column("Task")
-    table.add_column("Version")
-    table.add_column("Built")
-
-    for step in steps:
-        step_root = step.path.parent
-        has_image = (step_root / "Dockerfile").exists()
-        table.add_row(
-            step.name,
-            step.task,
-            step.version,
-            "yes" if has_image else "no",
-        )
-
-    console.print(table)
-
+    cmd = StepCommand(repo_root)
+    result = cmd.execute(action="list")
+    
+    if result.get("status") == "success":
+        presenter = StepPresenter()
+        presenter.present_list(result.get("steps", []))
+    else:
+        ui.error(result.get("message", "Failed to list steps"))
 
 @step_app.command("new")
 def step_new(
@@ -919,18 +911,18 @@ def step_add(
 @pipeline_app.command("list")
 def pipeline_list() -> None:
     """List all pipeline definitions from pipelines/*/pipeline.yaml."""
+    from moira_cli.commands.pipeline import PipelineCommand
+    from moira_cli.presenters.pipeline import PipelinePresenter
+    
     repo_root = _repo_root()
-    pipelines = discover_pipelines(repo_root)
-
-    table = Table(title="Pipelines")
-    table.add_column("Pipeline")
-    table.add_column("Steps")
-    table.add_column("Description")
-
-    for pipeline in pipelines:
-        table.add_row(pipeline.name, str(len(pipeline.steps)), pipeline.description)
-
-    console.print(table)
+    cmd = PipelineCommand(repo_root)
+    result = cmd.execute(action="list")
+    
+    if result.get("status") == "success":
+        presenter = PipelinePresenter()
+        presenter.present_list(result.get("pipelines", []))
+    else:
+        ui.error(result.get("message", "Failed to list pipelines"))
 
 
 @pipeline_app.command("new")
@@ -941,29 +933,18 @@ def pipeline_new(name: str = typer.Argument(..., help="Pipeline name.")) -> None
         moira pipeline new hello-world
         moira pipeline new text-search-rag
     """
+    from moira_cli.commands.pipeline import PipelineCommand
+    from moira_cli.presenters.pipeline import PipelinePresenter
+    
     repo_root = _repo_root()
-    _, _, pipelines_root = _default_dirs(repo_root)
-    target_dir = pipelines_root / name
-    pipeline_path = target_dir / "pipeline.yaml"
-    if pipeline_path.exists():
-        _exit_with_error(f"Pipeline already exists: {name}")
-
-    target_dir.mkdir(parents=True, exist_ok=True)
-    template = {
-        "name": name,
-        "version": "1.0",
-        "description": f"Pipeline {name}",
-        "trigger": {"type": "redis-stream", "stream": f"pipelines:{name}:jobs"},
-        "steps": [
-            {"id": "step-1", "task": "replace-me", "url": "http://replace-me:8000"},
-        ],
-    }
-    pipeline_path.write_text(
-        yaml.safe_dump(template, sort_keys=False), encoding="utf-8"
-    )
-    ui.success(f"Pipeline created: {name}")
-    ui.path("File", str(pipeline_path))
-    ui.hint(f"Edit {pipeline_path} to add your steps")
+    cmd = PipelineCommand(repo_root)
+    result = cmd.execute(action="new", pipeline_name=name)
+    
+    if result.get("status") == "success":
+        presenter = PipelinePresenter()
+        presenter.present_new(name, result.get("created", {}))
+    else:
+        ui.error(result.get("message", "Failed to create pipeline"))
 
 
 @pipeline_app.command("validate")
@@ -971,34 +952,18 @@ def pipeline_validate(
     name: str = typer.Argument(..., help="Pipeline directory name."),
 ) -> None:
     """Validate task compatibility across sequential pipeline steps."""
+    from moira_cli.commands.pipeline import PipelineCommand
+    from moira_cli.presenters.pipeline import PipelinePresenter
+    
     repo_root = _repo_root()
-    steps = _pipeline_step_defs(repo_root, name)
-    tasks_root, _, _ = _default_dirs(repo_root)
-    issues: list[str] = []
-
-    for i in range(len(steps) - 1):
-        left = steps[i]
-        right = steps[i + 1]
-
-        left_task = str(left.get("task", ""))
-        right_task = str(right.get("task", ""))
-
-        produced = _outputs_for_task(tasks_root, left_task)
-        required = _required_inputs_for_task(tasks_root, right_task)
-
-        missing = required - produced
-        if missing:
-            issues.append(
-                f"{left.get('id', left_task)} -> {right.get('id', right_task)} missing: {sorted(missing)}"
-            )
-
-    if issues:
-        console.print("[red]Validation failed[/red]")
-        for item in issues:
-            console.print(f" - {item}")
-        raise typer.Exit(code=1)
-
-    console.print(f"[green]Pipeline '{name}' is valid[/green]")
+    cmd = PipelineCommand(repo_root)
+    result = cmd.execute(action="validate", pipeline_name=name)
+    
+    if result.get("status") == "success":
+        presenter = PipelinePresenter()
+        presenter.present_validation(name, result.get("validation", {}))
+    else:
+        ui.error(result.get("message", "Failed to validate pipeline"))
 
 
 @pipeline_app.command("dev")
