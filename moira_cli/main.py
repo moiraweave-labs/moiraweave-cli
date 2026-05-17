@@ -18,8 +18,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.syntax import Syntax
 
 from moira_cli.commands import find_repo_root
-from moira_cli.commands.project import ProjectInitCommand
 from moira_cli.commands import flow as flow_command_module
+from moira_cli.commands.project import ProjectInitCommand
 from moira_cli.io import (
     load_moiraweave_config,
 )
