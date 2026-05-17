@@ -29,7 +29,13 @@ class ModelsPresenter(BasePresenter):
             self.ui.section("Step Status", indent=1)
             for step_id, step_result in steps.items():
                 step_status = step_result.get("status", "unknown")
-                icon = "✓" if step_status == "ready" else "⋯" if step_status == "timeout" else "○"
+                icon = (
+                    "✓"
+                    if step_status == "ready"
+                    else "⋯"
+                    if step_status == "timeout"
+                    else "○"
+                )
                 self.ui.console.print(f"  {icon} {step_id}: {step_status}")
 
     def present_status(self, pipeline_name: str, result: dict[str, Any]) -> None:

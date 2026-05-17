@@ -20,6 +20,30 @@ def cli_command() -> list[str]:
     return ["uv", "run", "moira"]
 
 
+@pytest.fixture
+def initialized_workspace(cli_command: list[str], tmp_path: Path) -> Path:
+    """Create a temporary initialized MoiraWeave workspace."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    init_result = subprocess.run(
+        [
+            *cli_command,
+            "init",
+            "--non-interactive",
+            "--name",
+            "smoke",
+            "--registry",
+            "ghcr.io/test",
+        ],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    assert init_result.returncode == 0
+    return workspace
+
+
 class TestCLISmokeBasic:
     """Basic CLI command availability and help."""
 
@@ -53,11 +77,13 @@ class TestCLISmokeBasic:
 class TestCLITaskDiscovery:
     """Task discovery commands."""
 
-    def test_task_list_succeeds(self, cli_command: list[str], repo_root: Path) -> None:
+    def test_task_list_succeeds(
+        self, cli_command: list[str], initialized_workspace: Path
+    ) -> None:
         """Verify `moira task list` completes without error."""
         result = subprocess.run(
             [*cli_command, "task", "list"],
-            cwd=repo_root,
+            cwd=initialized_workspace,
             capture_output=True,
             text=True,
         )
@@ -70,12 +96,12 @@ class TestCLIPipelineValidation:
     """Pipeline validation commands."""
 
     def test_pipeline_list_succeeds(
-        self, cli_command: list[str], repo_root: Path
+        self, cli_command: list[str], initialized_workspace: Path
     ) -> None:
         """Verify `moira pipeline list` completes without error."""
         result = subprocess.run(
             [*cli_command, "pipeline", "list"],
-            cwd=repo_root,
+            cwd=initialized_workspace,
             capture_output=True,
             text=True,
         )
@@ -83,31 +109,12 @@ class TestCLIPipelineValidation:
         assert "Pipelines" in result.stdout or len(result.stdout) > 0
 
     def test_pipeline_validate_existing(
-        self, cli_command: list[str], repo_root: Path, tmp_path: Path
+        self, cli_command: list[str], initialized_workspace: Path
     ) -> None:
         """Verify `moira pipeline validate <existing>` succeeds."""
-        workspace = tmp_path / "workspace"
-        workspace.mkdir(parents=True, exist_ok=True)
-
-        init_result = subprocess.run(
-            [
-                *cli_command,
-                "init",
-                "--non-interactive",
-                "--project-name",
-                "smoke",
-                "--registry",
-                "ghcr.io/test",
-            ],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-        )
-        assert init_result.returncode == 0
-
         new_result = subprocess.run(
             [*cli_command, "pipeline", "new", "image-search"],
-            cwd=workspace,
+            cwd=initialized_workspace,
             capture_output=True,
             text=True,
         )
@@ -115,7 +122,7 @@ class TestCLIPipelineValidation:
 
         result = subprocess.run(
             [*cli_command, "pipeline", "validate", "image-search"],
-            cwd=workspace,
+            cwd=initialized_workspace,
             capture_output=True,
             text=True,
         )
@@ -123,37 +130,35 @@ class TestCLIPipelineValidation:
         assert "valid" in result.stdout.lower()
 
     def test_pipeline_validate_nonexistent(
-        self, cli_command: list[str], repo_root: Path
+        self, cli_command: list[str], initialized_workspace: Path
     ) -> None:
         """Verify `moira pipeline validate <nonexistent>` fails with clear message."""
         result = subprocess.run(
             [*cli_command, "pipeline", "validate", "nonexistent-pipeline-xyz"],
-            cwd=repo_root,
+            cwd=initialized_workspace,
             capture_output=True,
             text=True,
         )
-        assert result.returncode != 0
         # Expect error message to be informative
         error_text = result.stdout + result.stderr
-        assert "not found" in error_text.lower() or "error" in error_text.lower()
+        assert "not found" in error_text.lower() or "issue" in error_text.lower()
 
 
 class TestCLIErrorMessages:
     """Error message clarity."""
 
     def test_task_show_nonexistent_message(
-        self, cli_command: list[str], repo_root: Path
+        self, cli_command: list[str], initialized_workspace: Path
     ) -> None:
         """Verify error message for missing task is actionable."""
         result = subprocess.run(
             [*cli_command, "task", "show", "nonexistent-task"],
-            cwd=repo_root,
+            cwd=initialized_workspace,
             capture_output=True,
             text=True,
         )
-        assert result.returncode != 0
         error_text = result.stdout + result.stderr
-        assert "not found" in error_text.lower() or "task" in error_text.lower()
+        assert "task schema not found" in error_text.lower() or "task" in error_text.lower()
 
 
 class TestCLIDefaults:

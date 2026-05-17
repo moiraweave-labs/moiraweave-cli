@@ -74,9 +74,7 @@ class JobCommand(BaseCommand):
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
 
-    def _wait(
-        self, handler: JobHandler, job_id: str, timeout: int
-    ) -> dict[str, Any]:
+    def _wait(self, handler: JobHandler, job_id: str, timeout: int) -> dict[str, Any]:
         """Wait for job completion."""
         try:
             final_status = handler.wait_for_job(job_id, timeout)

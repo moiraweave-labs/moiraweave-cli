@@ -35,7 +35,7 @@ class UIPresenter:
         "error": "red",
         "warning": "yellow",
         "info": "blue",
-        "secondary": "dim",
+        "secondary": "bright_black",
     }
 
     def __init__(self) -> None:
@@ -58,17 +58,23 @@ class UIPresenter:
         :param message: Error message.
         :param hint: Optional suggestion for resolution.
         """
-        text = Text(f"{self.ICONS['cross']} {message}", style=Style(color=self.COLORS["error"]))
+        text = Text(
+            f"{self.ICONS['cross']} {message}", style=Style(color=self.COLORS["error"])
+        )
         self.console.print(text)
         if hint:
-            self.console.print(f"  → {hint}", style=Style(color=self.COLORS["secondary"]))
+            self.console.print(
+                f"  → {hint}", style=Style(color=self.COLORS["secondary"])
+            )
 
     def warning(self, message: str) -> None:
         """Print warning message.
 
         :param message: Warning text.
         """
-        text = Text(f"{self.ICONS['warn']} {message}", style=Style(color=self.COLORS["warning"]))
+        text = Text(
+            f"{self.ICONS['warn']} {message}", style=Style(color=self.COLORS["warning"])
+        )
         self.console.print(text)
 
     def info(self, message: str) -> None:
@@ -76,7 +82,9 @@ class UIPresenter:
 
         :param message: Info text.
         """
-        text = Text(f"{self.ICONS['circle']} {message}", style=Style(color=self.COLORS["info"]))
+        text = Text(
+            f"{self.ICONS['circle']} {message}", style=Style(color=self.COLORS["info"])
+        )
         self.console.print(text)
 
     def header(self, title: str) -> None:
@@ -107,7 +115,9 @@ class UIPresenter:
 
         :param command: Command to execute.
         """
-        text = Text(f"  $ {command}", style=Style(color=self.COLORS["secondary"], italic=True))
+        text = Text(
+            f"  $ {command}", style=Style(color=self.COLORS["secondary"], italic=True)
+        )
         self.console.print(text)
 
     def path(self, description: str, path: str) -> None:
@@ -116,7 +126,10 @@ class UIPresenter:
         :param description: What was created/modified.
         :param path: File path.
         """
-        text = Text(f"{self.ICONS['arrow']} {description}: ", style=Style(color=self.COLORS["secondary"]))
+        text = Text(
+            f"{self.ICONS['arrow']} {description}: ",
+            style=Style(color=self.COLORS["secondary"]),
+        )
         text.append(path, style=Style(color=self.COLORS["info"], bold=True))
         self.console.print(text)
 
@@ -132,15 +145,13 @@ class UIPresenter:
             TextColumn("{task.description}", style=self.COLORS["secondary"]),
             transient=True,
         ) as progress:
-            task = progress.add_task(message, total=None)
+            progress.add_task(message, total=None)
             try:
                 yield
             finally:
                 progress.stop()
 
-    def progress_bar(
-        self, items: list, label: str = "Processing"
-    ) -> Progress:
+    def progress_bar(self, items: list, label: str = "Processing") -> Progress:
         """Create a progress bar for iteration.
 
         :param items: Items to iterate.

@@ -14,18 +14,19 @@ class TaskCommand(BaseCommand):
     def execute(
         self,
         action: str,
-        task_name: str | None = None,
-        description: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Execute task action.
 
         :param action: Action name (list, show, new).
-        :param task_name: Task name for specific operations.
-        :param description: Task description for creation.
         :param kwargs: Additional arguments.
+        :keyword task_name: Task name for specific operations.
+        :keyword description: Task description for creation.
         :returns: Result dictionary.
         """
+        task_name = kwargs.get("task_name")
+        description = kwargs.get("description")
+
         if self.repo_root is None:
             return {"status": "error", "message": "Not in a MoiraWeave project"}
 

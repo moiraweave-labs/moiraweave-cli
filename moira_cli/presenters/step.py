@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
-
-from rich.table import Table
 
 from moira_cli.presenters import BasePresenter
 
@@ -39,7 +36,7 @@ class StepPresenter(BasePresenter):
             )
 
         self.ui.console.print(table)
-        self.ui.hint(f"View step details: moira step show <name>")
+        self.ui.hint("View step details: moira step show <name>")
 
     def present_show(self, step_name: str, info: dict[str, Any]) -> None:
         """Present step details.
@@ -61,31 +58,6 @@ class StepPresenter(BasePresenter):
             self.ui.section("Outputs", indent=1)
             for out in info.get("outputs", []):
                 self.ui.console.print(f"  • {out.get('name')}: {out.get('type')}")
-
-    def present_live_metadata(
-        self, step_name: str, metadata: dict[str, Any], url: str | None = None
-    ) -> None:
-        """Present live step metadata.
-
-        :param step_name: Step name.
-        :param metadata: Live metadata payload.
-        :param url: Optional URL used for the request.
-        """
-        self.ui.header(f"Live Step: {step_name}")
-        if url:
-            self.ui.path("Endpoint", url)
-        self.ui.console.print(json.dumps(metadata, indent=2))
-
-    def present_add_step(self, step_ref: str, created: dict[str, Any]) -> None:
-        """Present official step materialization result.
-
-        :param step_ref: Step reference.
-        :param created: Created step metadata.
-        """
-        self.ui.success(f"Added official step: {step_ref}")
-        self.ui.path("Catalog", created.get("catalog", ""))
-        self.ui.path("Image", created.get("image_uri", ""))
-        self.ui.path("Location", created.get("path", ""))
 
     def present_test_result(self, step_name: str, result: dict[str, Any]) -> None:
         """Present test result.
@@ -128,9 +100,7 @@ class StepPresenter(BasePresenter):
             if output:
                 self.ui.console.print(output)
 
-    def present_push_result(
-        self, step_name: str, result: dict[str, Any]
-    ) -> None:
+    def present_push_result(self, step_name: str, result: dict[str, Any]) -> None:
         """Present push result.
 
         :param step_name: Step name.

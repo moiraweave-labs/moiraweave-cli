@@ -53,7 +53,9 @@ class JobHandler(BaseHandler):
                     response = client.get(url)
                     response.raise_for_status()
                     data = response.json()
-                    result = data.get("result", data) if isinstance(data, dict) else data
+                    result = (
+                        data.get("result", data) if isinstance(data, dict) else data
+                    )
                     return result if isinstance(result, dict) else {"data": result}
             except Exception as exc:
                 last_error = exc

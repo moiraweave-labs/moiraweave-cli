@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
 from moira_cli.handlers import BaseHandler
-from moira_cli.io import discover_pipelines
 
 
 class ModelsHandler(BaseHandler):
@@ -37,7 +34,10 @@ class ModelsHandler(BaseHandler):
         _, _, pipelines_root = self._get_dirs()
         pipeline_path = pipelines_root / pipeline_name / "pipeline.yaml"
         if not pipeline_path.exists():
-            return {"status": "error", "message": f"Pipeline not found: {pipeline_name}"}
+            return {
+                "status": "error",
+                "message": f"Pipeline not found: {pipeline_name}",
+            }
 
         pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
         steps = pipeline.get("steps", [])
@@ -81,7 +81,10 @@ class ModelsHandler(BaseHandler):
         _, _, pipelines_root = self._get_dirs()
         pipeline_path = pipelines_root / pipeline_name / "pipeline.yaml"
         if not pipeline_path.exists():
-            return {"status": "error", "message": f"Pipeline not found: {pipeline_name}"}
+            return {
+                "status": "error",
+                "message": f"Pipeline not found: {pipeline_name}",
+            }
 
         pipeline = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
         steps = pipeline.get("steps", [])
@@ -116,6 +119,8 @@ class ModelsHandler(BaseHandler):
 
         :param pipeline_name: Pipeline name.
         :returns: Clear result dict.
+        
+        NOTA: La confirmación interactiva debe hacerse en el comando Typer, no aquí.
         """
         cache_path = self.repo_root / ".cache" / "moiraweave" / "models" / pipeline_name
 
@@ -127,7 +132,6 @@ class ModelsHandler(BaseHandler):
 
         try:
             import shutil
-
             shutil.rmtree(cache_path)
             return {
                 "status": "cleared",

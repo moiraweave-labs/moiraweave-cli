@@ -14,22 +14,13 @@ import questionary
 import typer
 import yaml
 from rich.console import Console
-from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.syntax import Syntax
-from rich.table import Table
 
 from moira_cli.commands import find_repo_root
 from moira_cli.commands.project import ProjectInitCommand
 from moira_cli.io import (
-    check_prereqs,
-    discover_pipelines,
-    discover_steps,
-    discover_tasks,
-    ensure_local_env,
     load_moiraweave_config,
-    scaffold_workspace_structure,
-    write_default_moiraweave_config,
 )
 from moira_cli.ui import get_ui
 
@@ -390,6 +381,7 @@ def init(
     """
     cmd = ProjectInitCommand(repo_root=pathlib.Path.cwd())
     cmd.execute(
+        action="init",
         non_interactive=non_interactive,
         project_name=project_name,
         registry=registry,
@@ -401,11 +393,11 @@ def task_list() -> None:
     """List all registered tasks from tasks/*/schema.json."""
     from moira_cli.commands.task import TaskCommand
     from moira_cli.presenters.task import TaskPresenter
-    
+
     repo_root = _repo_root()
     cmd = TaskCommand(repo_root)
     result = cmd.execute(action="list")
-    
+
     if result.get("status") == "success":
         presenter = TaskPresenter()
         presenter.present_list(result.get("tasks", []))
@@ -422,11 +414,11 @@ def task_show(name: str = typer.Argument(..., help="Task name.")) -> None:
     """
     from moira_cli.commands.task import TaskCommand
     from moira_cli.presenters.task import TaskPresenter
-    
+
     repo_root = _repo_root()
     cmd = TaskCommand(repo_root)
     result = cmd.execute(action="show", task_name=name)
-    
+
     if result.get("status") == "success":
         presenter = TaskPresenter()
         presenter.present_show(
@@ -436,7 +428,10 @@ def task_show(name: str = typer.Argument(..., help="Task name.")) -> None:
             result.get("outputs", []),
         )
     else:
-        ui.error(result.get("message", "Failed to show task"), hint="Run 'moira task list' to see available tasks")
+        ui.error(
+            result.get("message", "Failed to show task"),
+            hint="Run 'moira task list' to see available tasks",
+        )
 
 
 @task_app.command("new")
@@ -451,7 +446,7 @@ def task_new(
     """
     from moira_cli.commands.task import TaskCommand
     from moira_cli.presenters.task import TaskPresenter
-    
+
     repo_root = _repo_root()
     description = f"Task contract for {name}"
     input_name = "input"
@@ -477,7 +472,7 @@ def task_new(
         task_name=name,
         description=description,
     )
-    
+
     if result.get("status") == "success":
         presenter = TaskPresenter()
         presenter.present_new(name, result.get("created", {}))
@@ -490,16 +485,17 @@ def step_list() -> None:
     """List all steps discovered from steps/*/step.yaml."""
     from moira_cli.commands.step import StepCommand
     from moira_cli.presenters.step import StepPresenter
-    
+
     repo_root = _repo_root()
     cmd = StepCommand(repo_root)
     result = cmd.execute(action="list")
-    
+
     if result.get("status") == "success":
         presenter = StepPresenter()
         presenter.present_list(result.get("steps", []))
     else:
         ui.error(result.get("message", "Failed to list steps"))
+
 
 @step_app.command("new")
 def step_new(
@@ -516,7 +512,10 @@ def step_new(
     tasks_root, steps_root, _ = _default_dirs(repo_root)
     schema_path = tasks_root / task / "schema.json"
     if not schema_path.exists():
-        _exit_with_error(f"Task schema not found: {schema_path}", hint=f"Run 'moira task new {task}' first")
+        _exit_with_error(
+            f"Task schema not found: {schema_path}",
+            hint=f"Run 'moira task new {task}' first",
+        )
 
     schema = _read_json_file(schema_path)
     step_name = f"{task}-{implementation}"
@@ -524,8 +523,18 @@ def step_new(
     app_root = step_root / "app"
     tests_root = step_root / "tests"
 
+
     if step_root.exists():
-        _exit_with_error(f"Step already exists: {step_name}")
+        confirmed = questionary.confirm(
+            f"El paso '{step_name}' ya existe. ¿Sobrescribir?",
+            default=False,
+        ).ask()
+        if not confirmed:
+            ui.info("Operación cancelada por el usuario.")
+            return
+        # Borrado seguro del directorio existente
+        import shutil
+        shutil.rmtree(step_root)
 
     app_root.mkdir(parents=True, exist_ok=True)
     tests_root.mkdir(parents=True, exist_ok=True)
@@ -666,15 +675,14 @@ def step_test(name: str = typer.Argument(..., help="Step directory name.")) -> N
     """
     from moira_cli.commands.step import StepCommand
     from moira_cli.presenters.step import StepPresenter
-    
+
     repo_root = _repo_root()
     cmd = StepCommand(repo_root)
     result = cmd.execute(action="test", step_name=name)
-    
+
     if result.get("status") == "success":
         presenter = StepPresenter()
-        test_result = result.get("test_result", {})
-        presenter.present_test_result(name, test_result)
+        presenter.present_test_result(name, result.get("test_result", {}))
     else:
         ui.error(result.get("message", "Failed to test step"))
 
@@ -702,9 +710,9 @@ def step_build(name: str = typer.Argument(..., help="Step directory name.")) -> 
         TextColumn("{task.description}", style="dim"),
         transient=True,
     ) as progress:
-        task_id = progress.add_task(f"Building {image}...", total=None)
+        progress.add_task(f"Building {image}...", total=None)
         try:
-            output = _run_command(
+            _run_command(
                 [
                     "docker",
                     "buildx",
@@ -722,7 +730,6 @@ def step_build(name: str = typer.Argument(..., help="Step directory name.")) -> 
         except typer.Exit:
             progress.stop()
             raise
-
     ui.success(f"Built image: {image}")
 
 
@@ -743,11 +750,21 @@ def step_push(
     """
     from moira_cli.commands.step import StepCommand
     from moira_cli.presenters.step import StepPresenter
-    
+
     repo_root = _repo_root()
-    cmd = StepCommand(repo_root)
-    result = cmd.execute(action="push", step_name=name, bump=bump)
-    
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("{task.description}", style="dim"),
+        transient=True,
+    ) as progress:
+        progress.add_task(f"Pushing {name}...", total=None)
+        try:
+            cmd = StepCommand(repo_root)
+            result = cmd.execute(action="push", step_name=name, bump=bump)
+            progress.stop()
+        except typer.Exit:
+            progress.stop()
+            raise
     if result.get("status") == "success":
         presenter = StepPresenter()
         push_result = result.get("push_result", {})
@@ -768,14 +785,10 @@ def step_show(
     :param name: Step name.
     :param url: Optional base URL.
     """
-    from moira_cli.handlers.step import StepHandler
-    from moira_cli.presenters.step import StepPresenter
-
-    repo_root = _repo_root()
-    handler = StepHandler(repo_root)
-    result = handler.get_live_step_metadata(name, url=url)
-    presenter = StepPresenter()
-    presenter.present_live_metadata(name, result, url or _infer_step_endpoint(name))
+    base = url or _infer_step_endpoint(name)
+    data = _request_json("GET", f"{base}/v2/models/{name}")
+    ui.info("Step metadata:")
+    console.print(Syntax(json.dumps(data, indent=2), "json"))
 
 
 @step_app.command("add")
@@ -792,18 +805,104 @@ def step_add(
         moira step add --from-catalog text-embed-fastembed
         moira step add --from-catalog text-embed-fastembed@1.0.0
     """
-    from moira_cli.commands.step import StepCommand
-    from moira_cli.presenters.step import StepPresenter
-
     repo_root = _repo_root()
-    cmd = StepCommand(repo_root)
-    result = cmd.execute(action="add", step_ref=step_ref)
+    config = load_moiraweave_config(repo_root)
 
-    if result.get("status") == "success":
-        presenter = StepPresenter()
-        presenter.present_add_step(step_ref, result.get("created", {}))
+    # Parse step reference
+    if "@" in step_ref:
+        step_name, step_version = step_ref.rsplit("@", 1)
     else:
-        ui.error(result.get("message", "Failed to add official step"), hint="Check available steps with 'moira step list'")
+        step_name = step_ref
+        step_version = "latest"
+
+    ui.header(f"Add Official Step: {step_name}")
+
+    catalog_name, catalog = _load_catalog_document(repo_root)
+    catalog_steps = list(catalog.get("steps", []))
+    candidates = [
+        dict(step) for step in catalog_steps if str(step.get("name", "")) == step_name
+    ]
+    if not candidates:
+        _exit_with_error(
+            f"Step not found in catalog {catalog_name}: {step_name}",
+            hint="Check available steps with 'moira step list'",
+        )
+
+    selected: dict[str, Any]
+    if step_version == "latest":
+        selected = sorted(
+            candidates,
+            key=lambda item: _semver_key(str(item.get("version", "0.0.0"))),
+            reverse=True,
+        )[0]
+    else:
+        selected = next(
+            (
+                item
+                for item in candidates
+                if str(item.get("version", "")) == step_version
+            ),
+            {},
+        )
+        if not selected:
+            _exit_with_error(
+                f"Version {step_version} not found for step {step_name}",
+                hint="Check catalog for available versions",
+            )
+
+    selected_version = str(selected.get("version", "0.1.0"))
+    step_task = str(selected.get("task", ""))
+    image_uri = str(selected.get("image_uri", ""))
+    if not image_uri:
+        _exit_with_error(f"Catalog entry for {step_name} has no image_uri")
+
+    materialized_path = repo_root / config.steps_dir / f"{step_name}-catalog"
+
+    if materialized_path.exists():
+        confirmed = questionary.confirm(
+            f"El paso de catálogo '{materialized_path.name}' ya existe. ¿Sobrescribir?",
+            default=False,
+        ).ask()
+        if not confirmed:
+            ui.info("Operación cancelada por el usuario.")
+            return
+        import shutil
+        shutil.rmtree(materialized_path)
+    materialized_path.mkdir(parents=True, exist_ok=False)
+
+    task_contract = dict(selected.get("task_contract", {}))
+    step_yaml = {
+        "name": step_name,
+        "version": selected_version,
+        "task": step_task,
+        "description": f"Catalog reference to {step_name}@{selected_version}",
+        "image": image_uri,
+        "source_catalog": catalog_name,
+        "source_uri": config.catalogs[catalog_name].uri,
+        "inputs": list(task_contract.get("inputs", [])),
+        "outputs": list(task_contract.get("outputs", [])),
+        "env": {},
+    }
+    (materialized_path / "step.yaml").write_text(
+        yaml.safe_dump(step_yaml, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    schema_payload = {
+        "task": step_task,
+        "version": selected_version,
+        "inputs": list(task_contract.get("inputs", [])),
+        "outputs": list(task_contract.get("outputs", [])),
+    }
+    (materialized_path / "schema.json").write_text(
+        json.dumps(schema_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    ui.success(f"Added official step: {step_name}@{selected_version}")
+    ui.path("Catalog", catalog_name)
+    ui.path("Image", image_uri)
+    ui.path("Location", str(materialized_path))
 
 
 @pipeline_app.command("list")
@@ -811,11 +910,11 @@ def pipeline_list() -> None:
     """List all pipeline definitions from pipelines/*/pipeline.yaml."""
     from moira_cli.commands.pipeline import PipelineCommand
     from moira_cli.presenters.pipeline import PipelinePresenter
-    
+
     repo_root = _repo_root()
     cmd = PipelineCommand(repo_root)
     result = cmd.execute(action="list")
-    
+
     if result.get("status") == "success":
         presenter = PipelinePresenter()
         presenter.present_list(result.get("pipelines", []))
@@ -831,13 +930,27 @@ def pipeline_new(name: str = typer.Argument(..., help="Pipeline name.")) -> None
         moira pipeline new hello-world
         moira pipeline new text-search-rag
     """
+
     from moira_cli.commands.pipeline import PipelineCommand
     from moira_cli.presenters.pipeline import PipelinePresenter
-    
+
     repo_root = _repo_root()
+    _, _, pipelines_root = _default_dirs(repo_root)
+    pipeline_path = pipelines_root / name / "pipeline.yaml"
+    if pipeline_path.exists():
+        confirmed = questionary.confirm(
+            f"La pipeline '{name}' ya existe. ¿Sobrescribir?",
+            default=False,
+        ).ask()
+        if not confirmed:
+            ui.info("Operación cancelada por el usuario.")
+            return
+        import shutil
+        shutil.rmtree(pipelines_root / name)
+
     cmd = PipelineCommand(repo_root)
     result = cmd.execute(action="new", pipeline_name=name)
-    
+
     if result.get("status") == "success":
         presenter = PipelinePresenter()
         presenter.present_new(name, result.get("created", {}))
@@ -852,11 +965,11 @@ def pipeline_validate(
     """Validate task compatibility across sequential pipeline steps."""
     from moira_cli.commands.pipeline import PipelineCommand
     from moira_cli.presenters.pipeline import PipelinePresenter
-    
+
     repo_root = _repo_root()
     cmd = PipelineCommand(repo_root)
     result = cmd.execute(action="validate", pipeline_name=name)
-    
+
     if result.get("status") == "success":
         presenter = PipelinePresenter()
         presenter.present_validation(name, result.get("validation", {}))
@@ -881,8 +994,18 @@ def pipeline_dev(name: str = typer.Argument(..., help="Pipeline name.")) -> None
             services.append(host)
 
     command = ["docker", "compose", "up", "-d", *services]
-    output = _run_command(command, cwd=repo_root)
-    console.print(output or f"Started services: {', '.join(services)}")
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("{task.description}", style="dim"),
+        transient=True,
+    ) as progress:
+        progress.add_task(f"Arrancando servicios: {', '.join(services)}", total=None)
+        output = _run_command(command, cwd=repo_root)
+        progress.stop()
+    if output:
+        ui.info(output)
+    else:
+        ui.success(f"Started services: {', '.join(services)}")
 
 
 @pipeline_app.command("run")
@@ -924,19 +1047,27 @@ def pipeline_run(
         console.print(Syntax(json.dumps(response, indent=2), "json"))
         return
 
-    console.print(f"[green]Started job {job_id}[/green]")
+    ui.success(f"Started job {job_id}")
     if detach:
         return
 
-    for _ in range(120):
-        status = _request_json("GET", f"{api_url}/jobs/{job_id}")
-        state = str(status.get("status", "unknown"))
-        console.print(f"status={state}")
-        if state.lower() in {"completed", "failed", "error"}:
-            console.print(Syntax(json.dumps(status, indent=2), "json"))
-            return
-        time.sleep(1)
-
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("{task.description}", style="dim"),
+        transient=True,
+    ) as progress:
+        progress.add_task(f"Esperando a que termine el job {job_id}...", total=None)
+        for _ in range(120):
+            status = _request_json("GET", f"{api_url}/jobs/{job_id}")
+            state = str(status.get("status", "unknown"))
+            ui.info(f"status={state}")
+            if state.lower() in {"completed", "failed", "error"}:
+                progress.stop()
+                ui.info("Job result:")
+                console.print(Syntax(json.dumps(status, indent=2), "json"))
+                return
+            time.sleep(1)
+        progress.stop()
     _exit_with_error("Timed out waiting for job completion")
 
 
@@ -958,36 +1089,47 @@ def pipeline_deploy(
         _exit_with_error(f"Environment not found in moiraweave.yaml: {env}")
 
     namespace = target.namespace or "moiraweave"
-    if target.deploy == "helm":
-        values = target.helm_values or "infra/helm/moiraweave/values.yaml"
-        output = _run_command(
-            [
-                "helm",
-                "upgrade",
-                "--install",
-                "moiraweave",
-                "infra/helm/moiraweave",
-                "--namespace",
-                namespace,
-                "--create-namespace",
-                "-f",
-                values,
-            ],
-            cwd=repo_root,
-        )
-        console.print(output)
-        return
-
-    if target.deploy == "argocd":
-        if not target.argocd_app:
-            _exit_with_error("argocd_app is required for deploy: argocd")
-        output = _run_command(
-            ["argocd", "app", "sync", target.argocd_app], cwd=repo_root
-        )
-        console.print(output)
-        return
-
-    _exit_with_error(f"Unsupported deploy strategy: {target.deploy}")
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("{task.description}", style="dim"),
+        transient=True,
+    ) as progress:
+        progress.add_task(f"Deploying pipeline ({target.deploy})...", total=None)
+        try:
+            if target.deploy == "helm":
+                values = target.helm_values or "infra/helm/moiraweave/values.yaml"
+                output = _run_command(
+                    [
+                        "helm",
+                        "upgrade",
+                        "install",
+                        "moiraweave",
+                        "infra/helm/moiraweave",
+                        "--namespace",
+                        namespace,
+                        "--create-namespace",
+                        "-f",
+                        values,
+                    ],
+                    cwd=repo_root,
+                )
+                progress.stop()
+                ui.info(output)
+                return
+            if target.deploy == "argocd":
+                if not target.argocd_app:
+                    _exit_with_error("argocd_app is required for deploy: argocd")
+                output = _run_command(
+                    ["argocd", "app", "sync", target.argocd_app], cwd=repo_root
+                )
+                progress.stop()
+                ui.info(output)
+                return
+            progress.stop()
+            _exit_with_error(f"Unsupported deploy strategy: {target.deploy}")
+        except typer.Exit:
+            progress.stop()
+            raise
 
 
 @pipeline_app.command("status")
@@ -1005,6 +1147,7 @@ def pipeline_status(
     repo_root = _repo_root()
     try:
         data = _request_json("GET", f"{api_url}/v1/pipelines/{name}/status")
+        ui.success("Pipeline status:")
         console.print(Syntax(json.dumps(data, indent=2), "json"))
         return
     except typer.Exit:
@@ -1028,7 +1171,7 @@ def pipeline_status(
         ],
         cwd=repo_root,
     )
-    console.print(output)
+    ui.info(output)
 
 
 @pipeline_app.command("logs")
@@ -1063,7 +1206,7 @@ def pipeline_logs(
     if follow:
         command.append("-f")
     output = _run_command(command, cwd=repo_root)
-    console.print(output)
+    ui.info(output)
 
 
 @pipeline_app.command("scale")
@@ -1098,7 +1241,7 @@ def pipeline_scale(
         ],
         cwd=repo_root,
     )
-    console.print(output)
+    ui.info(output)
 
 
 @pipeline_app.command("rollback")
@@ -1128,6 +1271,7 @@ def pipeline_rollback(
 
     output = _run_command(command, cwd=repo_root)
     console.print(output)
+    ui.info(output)
 
 
 @pipeline_app.command("metrics")
@@ -1144,6 +1288,7 @@ def pipeline_metrics(
     """
     del env
     data = _request_json("GET", f"{api_url}/v1/pipelines/{name}/metrics")
+    ui.info("Pipeline metrics:")
     console.print(Syntax(json.dumps(data, indent=2), "json"))
 
 
@@ -1155,11 +1300,11 @@ def models_prefetch(name: str = typer.Argument(..., help="Pipeline name.")) -> N
     """
     from moira_cli.commands.models import ModelsCommand
     from moira_cli.presenters.models import ModelsPresenter
-    
+
     repo_root = _repo_root()
     cmd = ModelsCommand(repo_root, api_url=DEFAULT_API_URL)
     result = cmd.execute(action="prefetch", pipeline_name=name)
-    
+
     if result.get("status") == "success":
         presenter = ModelsPresenter()
         presenter.present_prefetch(name, result.get("prefetch", {}))
@@ -1175,11 +1320,11 @@ def models_status(name: str = typer.Argument(..., help="Pipeline name.")) -> Non
     """
     from moira_cli.commands.models import ModelsCommand
     from moira_cli.presenters.models import ModelsPresenter
-    
+
     repo_root = _repo_root()
     cmd = ModelsCommand(repo_root, api_url=DEFAULT_API_URL)
     result = cmd.execute(action="status", pipeline_name=name)
-    
+
     if result.get("status") == "success":
         presenter = ModelsPresenter()
         presenter.present_status(name, result.get("model_status", {}))
@@ -1195,7 +1340,7 @@ def models_clear(name: str = typer.Argument(..., help="Pipeline name.")) -> None
     """
     from moira_cli.commands.models import ModelsCommand
     from moira_cli.presenters.models import ModelsPresenter
-    
+
     repo_root = _repo_root()
     confirmed = questionary.confirm(
         f"Delete local cache directory for {name}?",
@@ -1207,7 +1352,7 @@ def models_clear(name: str = typer.Argument(..., help="Pipeline name.")) -> None
 
     cmd = ModelsCommand(repo_root, api_url=DEFAULT_API_URL)
     result = cmd.execute(action="clear", pipeline_name=name)
-    
+
     if result.get("status") == "success":
         presenter = ModelsPresenter()
         presenter.present_clear(name, result.get("clear_result", {}))
@@ -1227,10 +1372,10 @@ def job_status(
     """
     from moira_cli.commands.job import JobCommand
     from moira_cli.presenters.job import JobPresenter
-    
+
     cmd = JobCommand(api_url=api_url)
     result = cmd.execute(action="status", job_id=job_id)
-    
+
     if result.get("status") == "success":
         presenter = JobPresenter()
         presenter.present_status(job_id, result.get("job_status", {}))
@@ -1250,10 +1395,10 @@ def job_result(
     """
     from moira_cli.commands.job import JobCommand
     from moira_cli.presenters.job import JobPresenter
-    
+
     cmd = JobCommand(api_url=api_url)
     result = cmd.execute(action="result", job_id=job_id)
-    
+
     if result.get("status") == "success":
         presenter = JobPresenter()
         presenter.present_result(job_id, result.get("result", {}))

@@ -66,7 +66,11 @@ class PipelinePresenter(BasePresenter):
             [
                 (1, f"moira pipeline show {pipeline_name}", "View pipeline definition"),
                 (2, "Edit pipeline.yaml to add steps", "Configure execution flow"),
-                (3, f"moira pipeline validate {pipeline_name}", "Validate task compatibility"),
+                (
+                    3,
+                    f"moira pipeline validate {pipeline_name}",
+                    "Validate task compatibility",
+                ),
             ],
         )
 

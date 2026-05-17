@@ -17,11 +17,17 @@ def find_repo_root() -> Path:
     """
     current = Path.cwd().resolve()
     for candidate in [current, *current.parents]:
+        if (candidate / "moiraweave.yaml").is_file():
+            return candidate
         if (candidate / "tasks").is_dir() and (candidate / "steps").is_dir():
             return candidate
+        if (candidate / ".moiraweave" / "tasks").is_dir() and (
+            candidate / ".moiraweave" / "steps"
+        ).is_dir():
+            return candidate
     raise FileNotFoundError(
-        f"Not in a MoiraWeave workspace. "
-        f"Run 'moira init' to create one or navigate to an existing workspace."
+        "Not in a MoiraWeave workspace. "
+        "Run 'moira init' to create one or navigate to an existing workspace."
     )
 
 
@@ -37,9 +43,14 @@ class BaseCommand(ABC):
         self.ui = get_ui()
 
     @abstractmethod
-    def execute(self, **kwargs: Any) -> Any:
+    def execute(
+        self, action: str, *args: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         """Execute the command.
 
-        :param kwargs: Command-specific arguments.
+        :param action: Command action to execute.
+        :param args: Optional positional command arguments.
+        :param kwargs: Command-specific keyword arguments.
+        :returns: Standardized command result dictionary.
         """
         ...

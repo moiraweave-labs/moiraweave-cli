@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import questionary
+from typing import Any
 
 from moira_cli.commands import BaseCommand
 from moira_cli.handlers.project import ProjectHandler
@@ -15,16 +13,25 @@ class ProjectInitCommand(BaseCommand):
 
     def execute(
         self,
-        non_interactive: bool = False,
-        project_name: str | None = None,
-        registry: str | None = None,
-    ) -> None:
+        action: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Execute project initialization.
 
-        :param non_interactive: Skip prompts and use defaults.
-        :param project_name: Optional project name.
-        :param registry: Optional OCI registry.
+        :param action: Project action to execute.
+        :param kwargs: Additional action-specific keyword arguments.
+        :keyword non_interactive: Skip prompts and use defaults.
+        :keyword project_name: Optional project name.
+        :keyword registry: Optional OCI registry.
+        :returns: Initialization result dictionary.
         """
+        if action != "init":
+            return {"status": "error", "message": f"Unknown action: {action}"}
+
+        _ = bool(kwargs.get("non_interactive", False))
+        project_name = kwargs.get("project_name")
+        registry = kwargs.get("registry")
+
         self.ui.header("MoiraWeave Project Initialization")
 
         # Create handler
@@ -37,11 +44,13 @@ class ProjectInitCommand(BaseCommand):
             self.ui.warning(f"Project already initialized: {result['config'].name}")
             self.ui.info("Current configuration:")
             self._print_config_summary(result["config"])
-            return
+            return result
 
         # Already initialized
         if result["status"] == "created":
             self._print_success_output(result)
+
+        return result
 
     def _print_success_output(self, result: dict) -> None:
         """Print success message with details.
@@ -61,7 +70,11 @@ class ProjectInitCommand(BaseCommand):
             "Next steps",
             [
                 (1, "moira step new <task> <impl>", "Scaffold a new step"),
-                (2, "moira step add --from-catalog text-embed-fastembed", "Add official step"),
+                (
+                    2,
+                    "moira step add --from-catalog text-embed-fastembed",
+                    "Add official step",
+                ),
                 (3, "moira pipeline new <name>", "Scaffold a pipeline"),
                 (4, "moira pipeline dev <name>", "Test locally"),
             ],

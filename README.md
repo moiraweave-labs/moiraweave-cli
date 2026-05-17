@@ -19,11 +19,59 @@ Developer CLI for creating, running, and operating MoiraWeave workspaces.
 - local runtime orchestration
 - deployment commands and job inspection
 
-## Installation
+## Install and Update (uv-style)
+
+### Install from PyPI
 
 ```bash
 uv tool install moiraweave-cli
+moira --version
 moira --help
+```
+
+### Upgrade to latest
+
+```bash
+uv tool upgrade moiraweave-cli
+```
+
+### Pin to a specific version
+
+```bash
+uv tool install moiraweave-cli==0.1.1
+```
+
+### Reinstall cleanly
+
+```bash
+uv tool uninstall moiraweave-cli
+uv tool install moiraweave-cli
+```
+
+### Install from GitHub (main branch)
+
+```bash
+uv tool install "git+https://github.com/moiraweave-labs/moiraweave-cli"
+```
+
+### Install from local source (for contributors)
+
+```bash
+uv tool install --editable .
+```
+
+### Verify resolution and tool path
+
+```bash
+uv tool list
+which moira
+```
+
+### Fallback (if you do not use uv)
+
+```bash
+pipx install moiraweave-cli
+pipx upgrade moiraweave-cli
 ```
 
 ## Quickstart

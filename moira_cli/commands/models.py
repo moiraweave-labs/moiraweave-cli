@@ -23,16 +23,17 @@ class ModelsCommand(BaseCommand):
     def execute(
         self,
         action: str,
-        pipeline_name: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Execute models action.
 
         :param action: Action name (prefetch, status, clear).
-        :param pipeline_name: Pipeline name.
         :param kwargs: Additional arguments.
+        :keyword pipeline_name: Pipeline name.
         :returns: Result dictionary.
         """
+        pipeline_name = kwargs.get("pipeline_name")
+
         if self.repo_root is None:
             return {"status": "error", "message": "Not in a MoiraWeave project"}
 

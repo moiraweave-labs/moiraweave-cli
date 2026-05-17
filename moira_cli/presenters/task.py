@@ -75,7 +75,11 @@ class TaskPresenter(BasePresenter):
             "Next steps",
             [
                 (1, f"moira task show {task_name}", "View task details"),
-                (2, "Edit schema.json to customize inputs/outputs", "Customize tensors"),
+                (
+                    2,
+                    "Edit schema.json to customize inputs/outputs",
+                    "Customize tensors",
+                ),
                 (3, "Add steps using this task", "Build pipelines"),
             ],
         )

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from moira_cli.handlers import BaseHandler
 from moira_cli.handlers.task import TaskHandler
@@ -85,8 +86,6 @@ class PipelineHandler(BaseHandler):
         :param name: Pipeline name.
         :returns: Validation result dict with status and issues.
         """
-        tasks_root = self.repo_root / self.config.tasks_dir
-
         try:
             pipeline = self.get_pipeline_definition(name)
         except FileNotFoundError:

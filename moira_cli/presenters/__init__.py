@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from moira_cli.ui import get_ui, UIPresenter
+from moira_cli.ui import get_ui
 
 
 class BasePresenter:

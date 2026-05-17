@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import json
+from typing import Any
 
 from moira_cli.presenters import BasePresenter
 

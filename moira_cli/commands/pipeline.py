@@ -14,16 +14,17 @@ class PipelineCommand(BaseCommand):
     def execute(
         self,
         action: str,
-        pipeline_name: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Execute pipeline action.
 
         :param action: Action name (list, show, new, validate).
-        :param pipeline_name: Pipeline name for specific operations.
         :param kwargs: Additional arguments.
+        :keyword pipeline_name: Pipeline name for specific operations.
         :returns: Result dictionary.
         """
+        pipeline_name = kwargs.get("pipeline_name")
+
         if self.repo_root is None:
             return {"status": "error", "message": "Not in a MoiraWeave project"}
 

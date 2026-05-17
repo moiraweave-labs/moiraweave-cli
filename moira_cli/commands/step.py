@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from moira_cli.commands import BaseCommand
@@ -14,28 +13,29 @@ class StepCommand(BaseCommand):
 
     def execute(
         self,
+        action: str,
         **kwargs: Any,
-    ) -> Any:
+    ) -> dict[str, Any]:
         """Execute step action.
 
-        :param kwargs: Command-specific arguments.
+        :param action: Action name (list, show, test, build, push).
+        :param kwargs: Additional arguments.
+        :keyword step_name: Step name for specific operations.
+        :keyword bump: Version bump type (patch, minor, major) for push.
         :returns: Result dictionary.
         """
+        step_name = kwargs.get("step_name")
+        bump = kwargs.get("bump")
+
         if self.repo_root is None:
             return {"status": "error", "message": "Not in a MoiraWeave project"}
 
-        action = str(kwargs.get("action", ""))
-        step_name = kwargs.get("step_name")
-        step_ref = kwargs.get("step_ref")
-        bump = kwargs.get("bump")
         handler = StepHandler(self.repo_root)
 
         if action == "list":
             return self._list_steps(handler)
         elif action == "show" and step_name:
             return self._show_step(handler, step_name)
-        elif action == "add" and step_ref:
-            return self._add_step(handler, step_ref)
         elif action == "test" and step_name:
             return self._test_step(handler, step_name)
         elif action == "build" and step_name:
@@ -79,18 +79,6 @@ class StepCommand(BaseCommand):
                 "status": "success",
                 "step": name,
                 "test_result": result,
-            }
-        except Exception as exc:
-            return {"status": "error", "message": str(exc)}
-
-    def _add_step(self, handler: StepHandler, step_ref: str) -> dict[str, Any]:
-        """Add official step from catalog."""
-        try:
-            result = handler.add_official_step(step_ref)
-            return {
-                "status": "success",
-                "step_ref": step_ref,
-                "created": result,
             }
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
