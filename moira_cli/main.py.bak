@@ -19,8 +19,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.syntax import Syntax
 from rich.table import Table
 
-from moira_cli.commands import find_repo_root
-from moira_cli.commands.project import ProjectInitCommand
 from moira_cli.io import (
     check_prereqs,
     discover_pipelines,
@@ -31,27 +29,24 @@ from moira_cli.io import (
     scaffold_workspace_structure,
     write_default_moiraweave_config,
 )
-from moira_cli.ui import get_ui
 
 DEFAULT_API_URL = "http://localhost:8000"
 
 console = Console()
-ui = get_ui()
-app = typer.Typer(
-    help="MoiraWeave CLI — build, test, and operate MLOps pipelines",
-    no_args_is_help=True,
-)
+app = typer.Typer(help="MoiraWeave developer CLI")
 task_app = typer.Typer(help="Manage tasks")
 step_app = typer.Typer(help="Manage steps")
 pipeline_app = typer.Typer(help="Manage pipelines")
 models_app = typer.Typer(help="Manage model cache and readiness")
 job_app = typer.Typer(help="Inspect detached jobs")
+project_app = typer.Typer(help="Manage workspace project")
 
 app.add_typer(task_app, name="task")
 app.add_typer(step_app, name="step")
 app.add_typer(pipeline_app, name="pipeline")
 app.add_typer(models_app, name="models")
 app.add_typer(job_app, name="job")
+app.add_typer(project_app, name="project")
 
 
 def _repo_root() -> pathlib.Path:
@@ -59,21 +54,28 @@ def _repo_root() -> pathlib.Path:
 
     :returns: Nearest parent directory containing `tasks/` and `steps/`.
     """
-    try:
-        return find_repo_root()
-    except FileNotFoundError as exc:
-        console.print(f"[red]{str(exc)}[/red]")
-        raise typer.Exit(code=1) from None
+    current = pathlib.Path.cwd().resolve()
+    for candidate in [current, *current.parents]:
+        if (candidate / "tasks").is_dir() and (candidate / "steps").is_dir():
+            return candidate
+    return current
 
 
-def _exit_with_error(message: str, hint: str | None = None, code: int = 1) -> NoReturn:
+def _render_header(title: str) -> None:
+    """Render a consistent Rich header panel.
+
+    :param title: Header title text.
+    """
+    console.print(Panel.fit(f"[bold cyan]{title}[/bold cyan]"))
+
+
+def _exit_with_error(message: str, code: int = 1) -> NoReturn:
     """Print an error and terminate.
 
     :param message: Human-readable error message.
-    :param hint: Optional suggestion.
     :param code: Process exit code.
     """
-    ui.error(message, hint=hint)
+    console.print(f"[red]{message}[/red]")
     raise typer.Exit(code=code)
 
 
@@ -360,40 +362,111 @@ def _semver_key(version: str) -> tuple[int, int, int]:
     return tuple(int(part) for part in parts)  # type: ignore[return-value]
 
 
+def _run_project_init(
+    non_interactive: bool,
+    project_name: str | None,
+    registry: str | None,
+) -> None:
+    """Initialize a new workspace project.
+
+    :param non_interactive: Skip prompts when ``True``.
+    :param project_name: Optional project name.
+    :param registry: Optional OCI registry.
+    """
+    repo_root = _repo_root()
+    config_path = repo_root / "moiraweave.yaml"
+
+    _render_header("MoiraWeave Project Init")
+
+    if config_path.exists():
+        config = load_moiraweave_config(repo_root)
+        console.print(f"[yellow]Project already initialized: {config.name}[/yellow]")
+        prereqs = check_prereqs()
+        table = Table(title="Environment prerequisites")
+        table.add_column("Check")
+        table.add_column("Status")
+        for name, ok in prereqs.items():
+            table.add_row(name, "[green]ok[/green]" if ok else "[red]missing[/red]")
+        table.add_row("config", f"[green]{config.name}[/green]")
+        console.print(table)
+        return
+
+    if project_name is None:
+        if non_interactive:
+            project_name = repo_root.name
+        else:
+            project_name = (
+                questionary.text("Project name", default=repo_root.name).ask()
+                or repo_root.name
+            )
+
+    if registry is None:
+        if non_interactive:
+            registry = "ghcr.io/myorg"
+        else:
+            registry = (
+                questionary.text(
+                    "OCI registry (e.g., ghcr.io/myorg)", default="ghcr.io/myorg"
+                ).ask()
+                or "ghcr.io/myorg"
+            )
+
+    write_default_moiraweave_config(repo_root, project_name, registry)
+    ensure_local_env(repo_root)
+    scaffold_workspace_structure(repo_root)
+
+    console.print("[green]✓ Created moiraweave.yaml[/green]")
+    console.print("[green]✓ Created .env with JWT secrets[/green]")
+    console.print("[green]✓ Created directory structure:[/green]")
+    console.print("  - pipelines/  (your pipeline definitions)")
+    console.print("  - steps/       (your custom step implementations)")
+    console.print("  - tasks/       (your custom task contracts)")
+    console.print("  - deploy/      (deployment configuration)")
+
+    console.print(
+        Panel(
+            "Next steps:\n"
+            "1) moira step new <task> <impl>  - Scaffold a new step\n"
+            "2) moira step add --from-catalog text-embed-fastembed  - Add official step\n"
+            "3) moira pipeline new <name>  - Scaffold a new pipeline\n"
+            "4) moira pipeline dev <name>  - Test your pipeline locally",
+            title="Ready to start",
+        )
+    )
+
+
 @app.command()
 def init(
-    non_interactive: bool = typer.Option(
-        False,
-        "--non-interactive",
-        help="Skip prompts and use defaults.",
-    ),
+    non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
     project_name: str = typer.Option(
-        None,
-        "--name",
-        help="Project name (defaults to current directory name).",
+        None, help="Project name (default: current directory)."
     ),
-    registry: str = typer.Option(
-        None,
-        "--registry",
-        help="OCI image registry (e.g., ghcr.io/myorg).",
-    ),
+    registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
 ) -> None:
-    """Initialize a new MoiraWeave workspace.
+    """Initialize a new MoiraWeave project workspace.
 
-    Creates moiraweave.yaml, .env, and directory structure under .moiraweave/
-    to keep your workspace clean and organized.
-
-    Examples:
-        moira init
-        moira init --name my-project --registry ghcr.io/myorg
-        moira init --non-interactive
+    Creates moiraweave.yaml, .env, and full directory structure (pipelines/, steps/, tasks/, deploy/).
     """
-    cmd = ProjectInitCommand(repo_root=pathlib.Path.cwd())
-    cmd.execute(
-        non_interactive=non_interactive,
-        project_name=project_name,
-        registry=registry,
-    )
+    _run_project_init(non_interactive, project_name, registry)
+
+
+@project_app.command("init")
+def project_init(
+    non_interactive: bool = typer.Option(False, help="Skip interactive prompts."),
+    project_name: str = typer.Option(
+        None, help="Project name (default: current directory)."
+    ),
+    registry: str = typer.Option(None, help="OCI registry (e.g., ghcr.io/myorg)."),
+) -> None:
+    """Initialize a new MoiraWeave project workspace.
+
+    This command mirrors ``moira init`` and is the preferred CLI-first entry point.
+
+    :param non_interactive: Disable prompts and use defaults.
+    :param project_name: Optional project name.
+    :param registry: Optional OCI registry.
+    """
+    _run_project_init(non_interactive, project_name, registry)
 
 
 @task_app.command("list")
@@ -416,14 +489,13 @@ def task_list() -> None:
 def task_show(name: str = typer.Argument(..., help="Task name.")) -> None:
     """Show full schema and compatible steps for a task.
 
-    Examples:
-        moira task show text-embed
+    :param name: Task name.
     """
     repo_root = _repo_root()
     tasks_root, _, _ = _default_dirs(repo_root)
     schema_path = tasks_root / name / "schema.json"
     if not schema_path.exists():
-        _exit_with_error(f"Task not found: {name}", hint=f"Run 'moira task list' to see available tasks")
+        _exit_with_error(f"Task not found: {name}")
 
     schema = _read_json_file(schema_path)
     steps = [step for step in discover_steps(repo_root) if step.task == name]
@@ -535,15 +607,14 @@ def step_new(
 ) -> None:
     """Scaffold a new step package from task schema.
 
-    Examples:
-        moira step new text-embed fastembed
-        moira step new image-search clip
+    :param task: Task name.
+    :param implementation: Step implementation suffix.
     """
     repo_root = _repo_root()
     tasks_root, steps_root, _ = _default_dirs(repo_root)
     schema_path = tasks_root / task / "schema.json"
     if not schema_path.exists():
-        _exit_with_error(f"Task schema not found: {schema_path}", hint=f"Run 'moira task new {task}' first")
+        _exit_with_error(f"Task schema not found: {schema_path}")
 
     schema = _read_json_file(schema_path)
     step_name = f"{task}-{implementation}"
@@ -673,16 +744,7 @@ def step_new(
         encoding="utf-8",
     )
 
-    ui.success(f"Step scaffolded: {step_name}")
-    ui.path("Location", str(step_root))
-    ui.next_steps(
-        "Next steps",
-        [
-            (1, "cd steps/" + step_name, "Enter the step directory"),
-            (2, "implement predict() in app/step.py", "Add your logic"),
-            (3, "moira step test " + step_name, "Run tests"),
-        ],
-    )
+    console.print(f"[green]Scaffolded step {step_name} at {step_root}[/green]")
 
 
 @step_app.command("test")
@@ -705,8 +767,7 @@ def step_test(name: str = typer.Argument(..., help="Step directory name.")) -> N
 def step_build(name: str = typer.Argument(..., help="Step directory name.")) -> None:
     """Build step container image locally.
 
-    Examples:
-        moira step build text-embed-fastembed
+    :param name: Step directory name.
     """
     repo_root = _repo_root()
     _, steps_root, _ = _default_dirs(repo_root)
@@ -716,36 +777,22 @@ def step_build(name: str = typer.Argument(..., help="Step directory name.")) -> 
         _exit_with_error(f"VERSION not found for step: {name}")
     version = version_file.read_text(encoding="utf-8").strip()
 
-    config = load_moiraweave_config(repo_root)
-    image = f"{config.registry.rstrip('/')}/{name}:v{version}"
-
-    with Progress(
-        SpinnerColumn(style="cyan"),
-        TextColumn("{task.description}", style="dim"),
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task(f"Building {image}...", total=None)
-        try:
-            output = _run_command(
-                [
-                    "docker",
-                    "buildx",
-                    "build",
-                    "--load",
-                    "-t",
-                    image,
-                    "-f",
-                    str(step_root / "Dockerfile"),
-                    str(step_root),
-                ],
-                cwd=repo_root,
-            )
-            progress.stop()
-        except typer.Exit:
-            progress.stop()
-            raise
-
-    ui.success(f"Built image: {image}")
+    image = f"ghcr.io/jgallego9/moiraweave-step-{name}:v{version}"
+    output = _run_command(
+        [
+            "docker",
+            "buildx",
+            "build",
+            "--load",
+            "-t",
+            image,
+            "-f",
+            str(step_root / "Dockerfile"),
+            str(step_root),
+        ],
+        cwd=repo_root,
+    )
+    console.print(output or f"Built image: {image}")
 
 
 @step_app.command("push")
@@ -753,15 +800,13 @@ def step_push(
     name: str = typer.Argument(..., help="Step directory name."),
     bump: str | None = typer.Option(
         None,
-        "--bump",
         help="Optional semver bump before push (patch|minor|major).",
     ),
 ) -> None:
     """Push step image to registry and optionally bump VERSION.
 
-    Examples:
-        moira step push text-embed-fastembed
-        moira step push text-embed-fastembed --bump patch
+    :param name: Step directory name.
+    :param bump: Optional semver bump strategy.
     """
     repo_root = _repo_root()
     _, steps_root, _ = _default_dirs(repo_root)
@@ -773,28 +818,14 @@ def step_push(
     version = version_file.read_text(encoding="utf-8").strip()
     if bump:
         if bump not in {"patch", "minor", "major"}:
-            _exit_with_error(f"Invalid bump: {bump}", hint="Must be one of: patch, minor, major")
+            _exit_with_error("--bump must be one of patch, minor, major")
         version = _bump_semver(version, bump)
         version_file.write_text(version + "\n", encoding="utf-8")
-        ui.success(f"Updated VERSION to {version}")
+        console.print(f"[green]Updated VERSION to {version}[/green]")
 
-    config = load_moiraweave_config(repo_root)
-    image = f"{config.registry.rstrip('/')}/{name}:v{version}"
-
-    with Progress(
-        SpinnerColumn(style="cyan"),
-        TextColumn("{task.description}", style="dim"),
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task(f"Pushing {image}...", total=None)
-        try:
-            _run_command(["docker", "push", image], cwd=repo_root)
-            progress.stop()
-        except typer.Exit:
-            progress.stop()
-            raise
-
-    ui.success(f"Pushed image: {image}")
+    image = f"ghcr.io/jgallego9/moiraweave-step-{name}:v{version}"
+    _run_command(["docker", "push", image], cwd=repo_root)
+    console.print(f"[green]Pushed {image}[/green]")
 
 
 @step_app.command("show")
@@ -822,11 +853,9 @@ def step_add(
 ) -> None:
     """Add an official step from the catalog to your workspace.
 
-    Materializes a reference to an official step as a local entry.
+    Materializes a reference to an official step as a local materialized step entry.
 
-    Examples:
-        moira step add --from-catalog text-embed-fastembed
-        moira step add --from-catalog text-embed-fastembed@1.0.0
+    :param step_ref: Step reference in format: name or name@version
     """
     repo_root = _repo_root()
     config = load_moiraweave_config(repo_root)
@@ -838,7 +867,7 @@ def step_add(
         step_name = step_ref
         step_version = "latest"
 
-    ui.header(f"Add Official Step: {step_name}")
+    _render_header(f"Add Official Step: {step_name}")
 
     catalog_name, catalog = _load_catalog_document(repo_root)
     catalog_steps = list(catalog.get("steps", []))
@@ -846,7 +875,7 @@ def step_add(
         dict(step) for step in catalog_steps if str(step.get("name", "")) == step_name
     ]
     if not candidates:
-        _exit_with_error(f"Step not found in catalog {catalog_name}: {step_name}", hint=f"Check available steps with 'moira step list'")
+        _exit_with_error(f"Step not found in catalog {catalog_name}: {step_name}")
 
     selected: dict[str, Any]
     if step_version == "latest":
@@ -866,8 +895,7 @@ def step_add(
         )
         if not selected:
             _exit_with_error(
-                f"Version {step_version} not found for step {step_name}",
-                hint=f"Check catalog for available versions"
+                f"Version {step_version} not found for step {step_name} in {catalog_name}"
             )
 
     selected_version = str(selected.get("version", "0.1.0"))
@@ -910,10 +938,10 @@ def step_add(
         encoding="utf-8",
     )
 
-    ui.success(f"Added official step: {step_name}@{selected_version}")
-    ui.path("Catalog", catalog_name)
-    ui.path("Image", image_uri)
-    ui.path("Location", str(materialized_path))
+    console.print(f"[green]Added official step:[/green] {step_name}@{selected_version}")
+    console.print(f"[cyan]Catalog:[/cyan] {catalog_name}")
+    console.print(f"[cyan]Image:[/cyan] {image_uri}")
+    console.print(f"[cyan]Created:[/cyan] {materialized_path}")
 
 
 @pipeline_app.command("list")
@@ -937,9 +965,7 @@ def pipeline_list() -> None:
 def pipeline_new(name: str = typer.Argument(..., help="Pipeline name.")) -> None:
     """Create a new pipeline scaffold.
 
-    Examples:
-        moira pipeline new hello-world
-        moira pipeline new text-search-rag
+    :param name: Pipeline name.
     """
     repo_root = _repo_root()
     _, _, pipelines_root = _default_dirs(repo_root)
@@ -961,9 +987,7 @@ def pipeline_new(name: str = typer.Argument(..., help="Pipeline name.")) -> None
     pipeline_path.write_text(
         yaml.safe_dump(template, sort_keys=False), encoding="utf-8"
     )
-    ui.success(f"Pipeline created: {name}")
-    ui.path("File", str(pipeline_path))
-    ui.hint(f"Edit {pipeline_path} to add your steps")
+    console.print(f"[green]Created {pipeline_path}[/green]")
 
 
 @pipeline_app.command("validate")

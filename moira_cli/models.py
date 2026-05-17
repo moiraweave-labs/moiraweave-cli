@@ -58,7 +58,7 @@ class MoiraWeaveConfig(BaseModel):
     registry: str
     environments: dict[str, EnvironmentConfig] = Field(default_factory=dict)
     catalogs: dict[str, CatalogSourceConfig] = Field(default_factory=dict)
-    pipelines_dir: str = "pipelines"
-    steps_dir: str = "steps"
-    tasks_dir: str = "tasks"
+    pipelines_dir: str = ".moiraweave/pipelines"
+    steps_dir: str = ".moiraweave/steps"
+    tasks_dir: str = ".moiraweave/tasks"
     runtime_version: str = "0.1.0"
