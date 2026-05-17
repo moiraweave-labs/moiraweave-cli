@@ -14,28 +14,28 @@ class StepCommand(BaseCommand):
 
     def execute(
         self,
-        action: str,
-        step_name: str | None = None,
-        bump: str | None = None,
         **kwargs: Any,
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Execute step action.
 
-        :param action: Action name (list, show, test, build, push).
-        :param step_name: Step name for specific operations.
-        :param bump: Version bump type (patch, minor, major) for push.
-        :param kwargs: Additional arguments.
+        :param kwargs: Command-specific arguments.
         :returns: Result dictionary.
         """
         if self.repo_root is None:
             return {"status": "error", "message": "Not in a MoiraWeave project"}
 
+        action = str(kwargs.get("action", ""))
+        step_name = kwargs.get("step_name")
+        step_ref = kwargs.get("step_ref")
+        bump = kwargs.get("bump")
         handler = StepHandler(self.repo_root)
 
         if action == "list":
             return self._list_steps(handler)
         elif action == "show" and step_name:
             return self._show_step(handler, step_name)
+        elif action == "add" and step_ref:
+            return self._add_step(handler, step_ref)
         elif action == "test" and step_name:
             return self._test_step(handler, step_name)
         elif action == "build" and step_name:
@@ -79,6 +79,18 @@ class StepCommand(BaseCommand):
                 "status": "success",
                 "step": name,
                 "test_result": result,
+            }
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def _add_step(self, handler: StepHandler, step_ref: str) -> dict[str, Any]:
+        """Add official step from catalog."""
+        try:
+            result = handler.add_official_step(step_ref)
+            return {
+                "status": "success",
+                "step_ref": step_ref,
+                "created": result,
             }
         except Exception as exc:
             return {"status": "error", "message": str(exc)}

@@ -768,9 +768,14 @@ def step_show(
     :param name: Step name.
     :param url: Optional base URL.
     """
-    base = url or _infer_step_endpoint(name)
-    data = _request_json("GET", f"{base}/v2/models/{name}")
-    console.print(Syntax(json.dumps(data, indent=2), "json"))
+    from moira_cli.handlers.step import StepHandler
+    from moira_cli.presenters.step import StepPresenter
+
+    repo_root = _repo_root()
+    handler = StepHandler(repo_root)
+    result = handler.get_live_step_metadata(name, url=url)
+    presenter = StepPresenter()
+    presenter.present_live_metadata(name, result, url or _infer_step_endpoint(name))
 
 
 @step_app.command("add")
@@ -787,92 +792,18 @@ def step_add(
         moira step add --from-catalog text-embed-fastembed
         moira step add --from-catalog text-embed-fastembed@1.0.0
     """
+    from moira_cli.commands.step import StepCommand
+    from moira_cli.presenters.step import StepPresenter
+
     repo_root = _repo_root()
-    config = load_moiraweave_config(repo_root)
+    cmd = StepCommand(repo_root)
+    result = cmd.execute(action="add", step_ref=step_ref)
 
-    # Parse step reference
-    if "@" in step_ref:
-        step_name, step_version = step_ref.rsplit("@", 1)
+    if result.get("status") == "success":
+        presenter = StepPresenter()
+        presenter.present_add_step(step_ref, result.get("created", {}))
     else:
-        step_name = step_ref
-        step_version = "latest"
-
-    ui.header(f"Add Official Step: {step_name}")
-
-    catalog_name, catalog = _load_catalog_document(repo_root)
-    catalog_steps = list(catalog.get("steps", []))
-    candidates = [
-        dict(step) for step in catalog_steps if str(step.get("name", "")) == step_name
-    ]
-    if not candidates:
-        _exit_with_error(f"Step not found in catalog {catalog_name}: {step_name}", hint=f"Check available steps with 'moira step list'")
-
-    selected: dict[str, Any]
-    if step_version == "latest":
-        selected = sorted(
-            candidates,
-            key=lambda item: _semver_key(str(item.get("version", "0.0.0"))),
-            reverse=True,
-        )[0]
-    else:
-        selected = next(
-            (
-                item
-                for item in candidates
-                if str(item.get("version", "")) == step_version
-            ),
-            {},
-        )
-        if not selected:
-            _exit_with_error(
-                f"Version {step_version} not found for step {step_name}",
-                hint=f"Check catalog for available versions"
-            )
-
-    selected_version = str(selected.get("version", "0.1.0"))
-    step_task = str(selected.get("task", ""))
-    image_uri = str(selected.get("image_uri", ""))
-    if not image_uri:
-        _exit_with_error(f"Catalog entry for {step_name} has no image_uri")
-
-    materialized_path = repo_root / config.steps_dir / f"{step_name}-catalog"
-    if materialized_path.exists():
-        _exit_with_error(f"Step already exists locally: {materialized_path.name}")
-    materialized_path.mkdir(parents=True, exist_ok=False)
-
-    task_contract = dict(selected.get("task_contract", {}))
-    step_yaml = {
-        "name": step_name,
-        "version": selected_version,
-        "task": step_task,
-        "description": f"Catalog reference to {step_name}@{selected_version}",
-        "image": image_uri,
-        "source_catalog": catalog_name,
-        "source_uri": config.catalogs[catalog_name].uri,
-        "inputs": list(task_contract.get("inputs", [])),
-        "outputs": list(task_contract.get("outputs", [])),
-        "env": {},
-    }
-    (materialized_path / "step.yaml").write_text(
-        yaml.safe_dump(step_yaml, sort_keys=False),
-        encoding="utf-8",
-    )
-
-    schema_payload = {
-        "task": step_task,
-        "version": selected_version,
-        "inputs": list(task_contract.get("inputs", [])),
-        "outputs": list(task_contract.get("outputs", [])),
-    }
-    (materialized_path / "schema.json").write_text(
-        json.dumps(schema_payload, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-    ui.success(f"Added official step: {step_name}@{selected_version}")
-    ui.path("Catalog", catalog_name)
-    ui.path("Image", image_uri)
-    ui.path("Location", str(materialized_path))
+        ui.error(result.get("message", "Failed to add official step"), hint="Check available steps with 'moira step list'")
 
 
 @pipeline_app.command("list")

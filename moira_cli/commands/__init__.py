@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from moira_cli.ui import get_ui
 
@@ -36,7 +37,7 @@ class BaseCommand(ABC):
         self.ui = get_ui()
 
     @abstractmethod
-    def execute(self, **kwargs) -> None:
+    def execute(self, **kwargs: Any) -> Any:
         """Execute the command.
 
         :param kwargs: Command-specific arguments.
