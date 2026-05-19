@@ -614,8 +614,54 @@ def step_new(
         '    uvicorn.run("app.main:app", host="0.0.0.0", port=8080, log_level="info")\n',
         encoding="utf-8",
     )
+    class_name = (
+        f"{task.title().replace('-', '').replace('_', '')}"
+        f"{implementation.title().replace('-', '').replace('_', '')}Step"
+    )
+    (tests_root / "__init__.py").write_text("", encoding="utf-8")
+    (tests_root / "conftest.py").write_text(
+        '"""Shared fixtures for the scaffolded step tests."""\n\n'
+        "from __future__ import annotations\n\n"
+        "import pathlib\n"
+        "import sys\n"
+        "from unittest.mock import MagicMock\n\n"
+        "import pytest\n\n"
+        "_STEP_ROOT = str(pathlib.Path(__file__).resolve().parents[1])\n"
+        "for _k in list(sys.modules):\n"
+        '    if _k == "app" or _k.startswith("app."):\n'
+        "        del sys.modules[_k]\n"
+        "if _STEP_ROOT not in sys.path:\n"
+        "    sys.path.insert(0, _STEP_ROOT)\n\n\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def _restore_step_app() -> None:\n"
+        '    """Reload app modules before each test to avoid cross-test pollution."""\n'
+        "    if not sys.path or sys.path[0] != _STEP_ROOT:\n"
+        "        sys.path.insert(0, _STEP_ROOT)\n"
+        "    for _k in list(sys.modules):\n"
+        '        if _k == "app" or _k.startswith("app."):\n'
+        "            del sys.modules[_k]\n\n\n"
+        "@pytest.fixture()\n"
+        "def mock_model() -> MagicMock:\n"
+        '    """Return a generic mock model ready to be patched into the step."""\n'
+        "    return MagicMock()\n\n\n"
+        "@pytest.fixture()\n"
+        f"def step(mock_model: MagicMock):  # type: ignore[no-untyped-def]\n"
+        f'    """Return a {class_name} with a mocked model dependency."""\n'
+        "    from app.config import Settings\n"
+        f"    from app.step import {class_name}\n\n"
+        f"    return {class_name}(Settings())\n",
+        encoding="utf-8",
+    )
     (tests_root / "test_step.py").write_text(
-        "def test_scaffold_placeholder() -> None:\n    assert True\n",
+        """"\"\"\"Tests for the scaffolded step.\"\"\"
+
+import pytest
+
+
+def test_scaffold_placeholder() -> None:
+    # Replace with real assertions against the step fixture once predict() is implemented.
+    assert True
+""",
         encoding="utf-8",
     )
     (step_root / "VERSION").write_text("0.1.0\n", encoding="utf-8")
@@ -642,13 +688,11 @@ def step_new(
         f'description = "MoiraWeave step: {task} via {implementation}"\n'
         'requires-python = ">=3.13"\n'
         "dependencies = [\n"
-        '  "moiraweave-step-sdk",\n'
+        '  "moiraweave-step-sdk>=0.1.0",\n'
         '  "pydantic-settings>=2.0",\n'
         '  "uvicorn[standard]>=0.30",\n'
         "]\n\n"
-        "[tool.uv]\npackage = false\n\n"
-        "[tool.uv.sources]\n"
-        "moiraweave-step-sdk = { workspace = true }\n",
+        "[tool.uv]\npackage = false\n",
         encoding="utf-8",
     )
     (step_root / "Dockerfile").write_text(
@@ -666,10 +710,11 @@ def step_new(
 
     ui.success(f"Step scaffolded: {step_name}")
     ui.path("Location", str(step_root))
+    _, steps_root_display, _ = _default_dirs(repo_root)
     ui.next_steps(
         "Next steps",
         [
-            (1, "cd steps/" + step_name, "Enter the step directory"),
+            (1, f"cd {steps_root_display / step_name}", "Enter the step directory"),
             (2, "implement predict() in app/step.py", "Add your logic"),
             (3, "moira step test " + step_name, "Run tests"),
         ],
@@ -1417,5 +1462,24 @@ def job_result(
         ui.error(result.get("message", "Failed to get job result"))
 
 
-if __name__ == "__main__":
-    app()
+@app.callback()
+def main(ctx: typer.Context):
+    """Main entrypoint for the CLI."""
+    if ctx.invoked_subcommand is None and ctx.params.get("version"):
+        version = (
+            (pathlib.Path(__file__).parent.parent / "version.txt").read_text().strip()
+        )
+        console.print(f"MoiraWeave CLI version {version}")
+        raise typer.Exit()
+
+
+app.add_typer(
+    typer.Typer(
+        add_completion=False,
+        no_args_is_help=True,
+        callback=main,
+        context_settings={"allow_extra_args": True},
+    ),
+    name="",
+    help="MoiraWeave CLI",
+)
