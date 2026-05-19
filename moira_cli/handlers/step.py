@@ -82,7 +82,7 @@ class StepHandler(BaseHandler):
             "returncode": proc.returncode,
         }
 
-    # Si se añade un método destructivo aquí, añadir confirmación en el comando Typer, no aquí.
+    # If a destructive method is added here, add confirmation in the Typer command, not here.
 
     def build_step(self, name: str) -> dict[str, Any]:
         """Build step container image.

@@ -120,7 +120,7 @@ class ModelsHandler(BaseHandler):
         :param pipeline_name: Pipeline name.
         :returns: Clear result dict.
 
-        NOTA: La confirmación interactiva debe hacerse en el comando Typer, no aquí.
+        NOTE: Interactive confirmation must be done in the Typer command, not here.
         """
         cache_path = self.repo_root / ".cache" / "moiraweave" / "models" / pipeline_name
 

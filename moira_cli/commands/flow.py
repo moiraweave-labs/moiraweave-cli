@@ -1,5 +1,5 @@
 """
-Comando CLI para mostrar el flujo del workspace como árbol visual.
+CLI command to show the workspace flow as a visual tree.
 """
 
 import typer
@@ -8,7 +8,7 @@ from moira_cli.handlers.flow import show_flow
 
 
 def flow_command():
-    """Muestra el flujo del workspace/proyecto como un árbol visual."""
+    """Show the workspace/project flow as a visual tree."""
     show_flow()
 
 

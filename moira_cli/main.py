@@ -540,7 +540,7 @@ def step_new(
         if not confirmed:
             ui.info("Operation cancelled.")
             return
-        # Borrado seguro del directorio existente
+        # Safe removal of existing directory
         import shutil
 
         shutil.rmtree(step_root)
@@ -1118,7 +1118,9 @@ def pipeline_run(
         for elapsed in range(timeout):
             status = _request_json("GET", f"{api_url}/jobs/{job_id}")
             state = str(status.get("status", "unknown"))
-            progress.update(task, description=f"Waiting for job {job_id}... ({elapsed}s) [{state}]")
+            progress.update(
+                task, description=f"Waiting for job {job_id}... ({elapsed}s) [{state}]"
+            )
             if state.lower() in {"completed", "failed", "error"}:
                 progress.stop()
                 ui.info("Job result:")
@@ -1490,6 +1492,3 @@ def main(
 ) -> None:
     """Main entrypoint for the CLI."""
     del ctx, version
-
-
-
