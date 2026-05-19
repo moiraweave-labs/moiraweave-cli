@@ -41,11 +41,11 @@ models_app = typer.Typer(help="Manage model cache and readiness")
 job_app = typer.Typer(help="Inspect detached jobs")
 
 
-# Registrar el comando 'flow' en el CLI principal
+# Register 'flow' command
 app.add_typer(
     flow_command_module.app,
     name="flow",
-    help="Muestra el flujo del workspace como árbol visual",
+    help="Show workspace as a visual dependency tree",
 )
 app.add_typer(task_app, name="task")
 app.add_typer(step_app, name="step")
@@ -534,11 +534,11 @@ def step_new(
 
     if step_root.exists():
         confirmed = questionary.confirm(
-            f"El paso '{step_name}' ya existe. ¿Sobrescribir?",
+            f"Step '{step_name}' already exists. Overwrite?",
             default=False,
         ).ask()
         if not confirmed:
-            ui.info("Operación cancelada por el usuario.")
+            ui.info("Operation cancelled.")
             return
         # Borrado seguro del directorio existente
         import shutil
@@ -914,11 +914,11 @@ def step_add(
 
     if materialized_path.exists():
         confirmed = questionary.confirm(
-            f"El paso de catálogo '{materialized_path.name}' ya existe. ¿Sobrescribir?",
+            f"Catalog step '{materialized_path.name}' already exists. Overwrite?",
             default=False,
         ).ask()
         if not confirmed:
-            ui.info("Operación cancelada por el usuario.")
+            ui.info("Operation cancelled.")
             return
         import shutil
 
@@ -994,11 +994,11 @@ def pipeline_new(name: str = typer.Argument(..., help="Pipeline name.")) -> None
     pipeline_path = pipelines_root / name / "pipeline.yaml"
     if pipeline_path.exists():
         confirmed = questionary.confirm(
-            f"La pipeline '{name}' ya existe. ¿Sobrescribir?",
+            f"Pipeline '{name}' already exists. Overwrite?",
             default=False,
         ).ask()
         if not confirmed:
-            ui.info("Operación cancelada por el usuario.")
+            ui.info("Operation cancelled.")
             return
         import shutil
 
@@ -1055,7 +1055,7 @@ def pipeline_dev(name: str = typer.Argument(..., help="Pipeline name.")) -> None
         TextColumn("{task.description}", style="dim"),
         transient=True,
     ) as progress:
-        progress.add_task(f"Arrancando servicios: {', '.join(services)}", total=None)
+        progress.add_task(f"Starting services: {', '.join(services)}", total=None)
         output = _run_command(command, cwd=repo_root)
         progress.stop()
     if output:
@@ -1069,6 +1069,7 @@ def pipeline_run(
     name: str = typer.Argument(..., help="Pipeline name."),
     input_data: str = typer.Option(..., "--input", help="Input JSON or @file path."),
     detach: bool = typer.Option(False, help="Return job id without waiting."),
+    timeout: int = typer.Option(120, help="Seconds to wait for job completion."),
     api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
 ) -> None:
     """Run a pipeline through runtime API.
@@ -1076,6 +1077,7 @@ def pipeline_run(
     :param name: Pipeline name.
     :param input_data: Inline JSON or file path.
     :param detach: Return immediately with job id.
+    :param timeout: Seconds to wait for job completion.
     :param api_url: API base URL.
     """
     payload = _parse_json_input(input_data)
@@ -1112,11 +1114,11 @@ def pipeline_run(
         TextColumn("{task.description}", style="dim"),
         transient=True,
     ) as progress:
-        progress.add_task(f"Esperando a que termine el job {job_id}...", total=None)
-        for _ in range(120):
+        task = progress.add_task(f"Waiting for job {job_id}... (0s)", total=None)
+        for elapsed in range(timeout):
             status = _request_json("GET", f"{api_url}/jobs/{job_id}")
             state = str(status.get("status", "unknown"))
-            ui.info(f"status={state}")
+            progress.update(task, description=f"Waiting for job {job_id}... ({elapsed}s) [{state}]")
             if state.lower() in {"completed", "failed", "error"}:
                 progress.stop()
                 ui.info("Job result:")
@@ -1124,7 +1126,10 @@ def pipeline_run(
                 return
             time.sleep(1)
         progress.stop()
-    _exit_with_error("Timed out waiting for job completion")
+    _exit_with_error(
+        f"Timed out after {timeout}s waiting for job {job_id}.\n"
+        f"Hint: check later with: moira job result {job_id}"
+    )
 
 
 @pipeline_app.command("deploy")
@@ -1462,10 +1467,8 @@ def job_result(
         ui.error(result.get("message", "Failed to get job result"))
 
 
-@app.callback()
-def main(ctx: typer.Context):
-    """Main entrypoint for the CLI."""
-    if ctx.invoked_subcommand is None and ctx.params.get("version"):
+def _version_callback(value: bool) -> None:
+    if value:
         version = (
             (pathlib.Path(__file__).parent.parent / "version.txt").read_text().strip()
         )
@@ -1473,13 +1476,20 @@ def main(ctx: typer.Context):
         raise typer.Exit()
 
 
-app.add_typer(
-    typer.Typer(
-        add_completion=False,
-        no_args_is_help=True,
-        callback=main,
-        context_settings={"allow_extra_args": True},
+@app.callback()
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show version and exit.",
+        callback=_version_callback,
+        is_eager=True,
     ),
-    name="",
-    help="MoiraWeave CLI",
-)
+) -> None:
+    """Main entrypoint for the CLI."""
+    del ctx, version
+
+
+
