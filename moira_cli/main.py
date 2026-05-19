@@ -1116,7 +1116,7 @@ def pipeline_run(
     ) as progress:
         task = progress.add_task(f"Waiting for job {job_id}... (0s)", total=None)
         for elapsed in range(timeout):
-            status = _request_json("GET", f"{api_url}/jobs/{job_id}")
+            status = _request_json("GET", f"{api_url}/v1/pipelines/jobs/{job_id}")
             state = str(status.get("status", "unknown"))
             progress.update(
                 task, description=f"Waiting for job {job_id}... ({elapsed}s) [{state}]"
@@ -1165,7 +1165,7 @@ def pipeline_deploy(
                     [
                         "helm",
                         "upgrade",
-                        "install",
+                        "--install",
                         "moiraweave",
                         "infra/helm/moiraweave",
                         "--namespace",
