@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -21,6 +22,42 @@ class JobHandler(BaseHandler):
         super().__init__(repo_root)
         self.api_url = api_url
 
+    @staticmethod
+    def _auth_headers() -> dict[str, str]:
+        """Return Authorization header dict when MOIRA_TOKEN is set.
+
+        :returns: Headers dict, empty if no token is configured.
+        """
+        token = os.environ.get("MOIRA_TOKEN")
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
+    def list_jobs(
+        self,
+        pipeline_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List recent jobs for the current user.
+
+        :param pipeline_id: Optional pipeline name filter.
+        :param limit: Maximum number of jobs to return.
+        :returns: List of job status dicts, newest first.
+        :raises RuntimeError: If API request fails.
+        """
+        params: list[tuple[str, str]] = []
+        if pipeline_id:
+            params.append(("pipeline_id", pipeline_id))
+        params.append(("limit", str(limit)))
+        query = "&".join(f"{k}={v}" for k, v in params)
+        url = f"{self.api_url}/v1/pipelines/jobs?{query}"
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(url, headers=self._auth_headers())
+                response.raise_for_status()
+                data = response.json()
+                return data if isinstance(data, list) else []
+        except Exception as exc:
+            raise RuntimeError(f"Failed to list jobs: {exc}") from exc
+
     def get_job_status(self, job_id: str) -> dict[str, Any]:
         """Get job status from API.
 
@@ -30,7 +67,10 @@ class JobHandler(BaseHandler):
         """
         try:
             with httpx.Client(timeout=15.0) as client:
-                response = client.get(f"{self.api_url}/jobs/{job_id}")
+                response = client.get(
+                    f"{self.api_url}/v1/pipelines/jobs/{job_id}",
+                    headers=self._auth_headers(),
+                )
                 response.raise_for_status()
                 data = response.json()
                 return data if isinstance(data, dict) else {"data": data}
@@ -44,13 +84,15 @@ class JobHandler(BaseHandler):
         :returns: Job result dict.
         :raises RuntimeError: If API request fails or result not found.
         """
-        urls = [f"{self.api_url}/jobs/{job_id}/result", f"{self.api_url}/jobs/{job_id}"]
+        urls = [
+            f"{self.api_url}/v1/pipelines/jobs/{job_id}",
+        ]
 
         last_error = None
         for url in urls:
             try:
                 with httpx.Client(timeout=15.0) as client:
-                    response = client.get(url)
+                    response = client.get(url, headers=self._auth_headers())
                     response.raise_for_status()
                     data = response.json()
                     result = (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import time
@@ -276,15 +277,20 @@ def _request_json(
 ) -> dict[str, Any]:
     """Issue an HTTP request and parse JSON response.
 
+    Reads ``MOIRA_TOKEN`` from the environment and sends it as a Bearer
+    Authorization header when present.
+
     :param method: HTTP method.
     :param url: Request URL.
     :param payload: Optional JSON body.
     :returns: Parsed JSON dictionary.
     :raises typer.Exit: If request fails.
     """
+    token = os.environ.get("MOIRA_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         with httpx.Client(timeout=15.0) as client:
-            response = client.request(method, url, json=payload)
+            response = client.request(method, url, json=payload, headers=headers)
             response.raise_for_status()
             body = response.json()
             return body if isinstance(body, dict) else {"data": body}
@@ -1493,6 +1499,33 @@ def models_clear(name: str = typer.Argument(..., help="Pipeline name.")) -> None
         presenter.present_clear(name, result.get("clear_result", {}))
     else:
         ui.error(result.get("message", "Failed to clear cache"))
+
+
+@job_app.command("list")
+def job_list(
+    pipeline: str | None = typer.Option(
+        None, "--pipeline", "-p", help="Filter by pipeline name."
+    ),
+    limit: int = typer.Option(20, help="Maximum number of jobs to show."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """List recent jobs for the authenticated user.
+
+    :param pipeline: Optional pipeline name filter.
+    :param limit: Maximum number of jobs to display.
+    :param api_url: API base URL.
+    """
+    from moira_cli.commands.job import JobCommand
+    from moira_cli.presenters.job import JobPresenter
+
+    cmd = JobCommand(api_url=api_url)
+    result = cmd.execute(action="list", pipeline_id=pipeline, limit=limit)
+
+    if result.get("status") == "success":
+        presenter = JobPresenter()
+        presenter.present_list(result.get("jobs", []))
+    else:
+        ui.error(result.get("message", "Failed to list jobs"))
 
 
 @job_app.command("status")

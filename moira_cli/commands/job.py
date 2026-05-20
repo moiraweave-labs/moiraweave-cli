@@ -37,7 +37,11 @@ class JobCommand(BaseCommand):
         """
         handler = JobHandler(self.repo_root, api_url=self.api_url)
 
-        if action == "status" and job_id:
+        if action == "list":
+            return self._list_jobs(
+                handler, kwargs.get("pipeline_id"), kwargs.get("limit", 20)
+            )
+        elif action == "status" and job_id:
             return self._get_status(handler, job_id)
         elif action == "result" and job_id:
             return self._get_result(handler, job_id)
@@ -45,6 +49,21 @@ class JobCommand(BaseCommand):
             return self._wait(handler, job_id, timeout)
         else:
             return {"status": "error", "message": f"Unknown action: {action}"}
+
+    def _list_jobs(
+        self,
+        handler: JobHandler,
+        pipeline_id: str | None,
+        limit: int,
+    ) -> dict[str, Any]:
+        """List jobs for the current user."""
+        try:
+            jobs = handler.list_jobs(pipeline_id=pipeline_id, limit=limit)
+            return {"status": "success", "jobs": jobs}
+        except RuntimeError as exc:
+            return {"status": "error", "message": str(exc)}
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
 
     def _get_status(self, handler: JobHandler, job_id: str) -> dict[str, Any]:
         """Get job status."""

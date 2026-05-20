@@ -5,7 +5,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from rich.table import Table
+
 from moira_cli.presenters import BasePresenter
+
+_STATUS_STYLE: dict[str, str] = {
+    "completed": "green",
+    "failed": "red",
+    "error": "red",
+    "pending": "yellow",
+    "running": "cyan",
+}
 
 
 class JobPresenter(BasePresenter):
@@ -65,3 +75,35 @@ class JobPresenter(BasePresenter):
         for key, value in final_status.items():
             if key != "status":
                 self.ui.path(key.replace("_", " ").title(), str(value)[:100])
+
+    def present_list(self, jobs: list[dict[str, Any]]) -> None:
+        """Present a table of jobs, newest first.
+
+        :param jobs: List of job status dicts from the API.
+        """
+        if not jobs:
+            self.ui.info("No jobs found.")
+            return
+
+        table = Table(
+            show_header=True,
+            header_style="bold cyan",
+            border_style="dim",
+            expand=False,
+        )
+        table.add_column("Job ID", style="dim", max_width=36)
+        table.add_column("Pipeline")
+        table.add_column("Status")
+        table.add_column("Created At", style="dim")
+
+        for job in jobs:
+            job_state = str(job.get("status", "unknown")).lower()
+            style = _STATUS_STYLE.get(job_state, "white")
+            table.add_row(
+                str(job.get("job_id", "")),
+                str(job.get("pipeline_id", "")),
+                f"[{style}]{job_state}[/]",
+                str(job.get("created_at", ""))[:19],
+            )
+
+        self.ui.console.print(table)
