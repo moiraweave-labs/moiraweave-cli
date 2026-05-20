@@ -144,10 +144,3 @@ class ModelsHandler(BaseHandler):
                 "message": f"Failed to clear cache: {exc}",
             }
 
-    def _get_dirs(self) -> tuple[Path, Path, Path]:
-        """Get tasks/steps/pipelines directories."""
-        return (
-            self.repo_root / self.config.tasks_dir,
-            self.repo_root / self.config.steps_dir,
-            self.repo_root / self.config.pipelines_dir,
-        )

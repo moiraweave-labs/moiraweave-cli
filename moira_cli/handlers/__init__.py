@@ -56,3 +56,10 @@ class BaseHandler:
         :returns: Absolute path to pipelines directory.
         """
         return self.repo_root / self.config.pipelines_dir
+
+    def _get_dirs(self) -> tuple[Path, Path, Path]:
+        """Return ``(tasks_dir, steps_dir, pipelines_dir)`` as a convenience tuple.
+
+        :returns: Tuple of absolute paths for tasks, steps, and pipelines directories.
+        """
+        return self.tasks_dir, self.steps_dir, self.pipelines_dir
