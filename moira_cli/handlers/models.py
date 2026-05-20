@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -143,4 +142,3 @@ class ModelsHandler(BaseHandler):
                 "status": "error",
                 "message": f"Failed to clear cache: {exc}",
             }
-
