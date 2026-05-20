@@ -17,7 +17,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.1.0
       - name: Run release-please
         id: release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           release-type: python
           token: ${{ secrets.GITHUB_TOKEN }}
