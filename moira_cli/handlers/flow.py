@@ -56,7 +56,7 @@ def show_flow():
             continue
         for step in steps:
             # Supports step as string or dict
-            step_name = step.get("name") if isinstance(step, dict) else step
+            step_name = step.get("id") if isinstance(step, dict) else step
             step_node = pipeline_node.add(f"[green]Step: {step_name}[/green]")
             # Look up associated task if it exists
             step_file = STEPS_DIR / f"{step_name}.yaml"
