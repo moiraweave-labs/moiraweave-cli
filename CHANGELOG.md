@@ -1,5 +1,7 @@
 # Changelog
 
+> **Migration notice (2026-05-20)**: The CLI command was previously `inferflow`. It is now `moira`. No legacy aliases are maintained.
+
 ## [0.3.0](https://github.com/moiraweave-labs/moiraweave-cli/compare/v0.2.0...v0.3.0) (2026-05-17)
 
 
