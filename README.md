@@ -4,6 +4,7 @@
 [![Release Please](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/release.yml)
 [![Publish to PyPI](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/publish.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/publish.yml)
 [![PyPI](https://img.shields.io/pypi/v/moiraweave-cli)](https://pypi.org/project/moiraweave-cli/)
+[![Docs](https://img.shields.io/badge/docs-live-blue)](https://moiraweave-labs.github.io/moiraweave-docs/)
 [![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
