@@ -34,7 +34,7 @@ def show_flow():
         )
         return
 
-    pipeline_files = list(PIPELINES_DIR.glob("*.yaml"))
+    pipeline_files = list(PIPELINES_DIR.glob("*/pipeline.yaml"))
     if not pipeline_files:
         console.print(
             "[yellow]No pipeline files found in .moiraweave/pipelines/.[/yellow]"
@@ -42,7 +42,7 @@ def show_flow():
         return
 
     for pipeline_file in pipeline_files:
-        pipeline_name = pipeline_file.stem
+        pipeline_name = pipeline_file.parent.name
         pipeline_node = tree.add(f"[bold cyan]Pipeline: {pipeline_name}[/bold cyan]")
         try:
             with open(pipeline_file, "r") as f:

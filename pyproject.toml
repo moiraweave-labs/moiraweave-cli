@@ -30,3 +30,8 @@ dev = [
     "ruff>=0.15.13",
     "types-pyyaml>=6.0.12.20260510",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: end-to-end CLI workflow tests (deselect with -m 'not integration')",
+]
