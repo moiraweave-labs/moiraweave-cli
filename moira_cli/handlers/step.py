@@ -162,13 +162,26 @@ class StepHandler(BaseHandler):
             text=True,
             check=False,
         )
+        output = (proc.stdout + proc.stderr).strip()
+        auth_keywords = (
+            "unauthorized",
+            "denied",
+            "authentication required",
+            "login required",
+            "credential",
+            "not logged in",
+        )
+        auth_error = proc.returncode != 0 and any(
+            kw in output.lower() for kw in auth_keywords
+        )
         return {
             "status": "success" if proc.returncode == 0 else "failed",
             "image": image,
             "version": version,
             "bumped": bump is not None,
-            "output": proc.stdout or proc.stderr,
+            "output": output,
             "returncode": proc.returncode,
+            "auth_error": auth_error,
         }
 
     def _bump_semver(self, version: str, kind: str) -> str:

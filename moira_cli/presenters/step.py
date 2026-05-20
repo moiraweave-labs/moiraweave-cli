@@ -118,10 +118,17 @@ class StepPresenter(BasePresenter):
             self.ui.success(msg)
             self.ui.hint("Step is now available for pipelines to use")
         else:
-            self.ui.error(
-                f"Push failed (exit code: {result.get('returncode')})",
-                hint="Verify registry credentials and image name",
-            )
+            if result.get("auth_error"):
+                registry_host = image.split("/")[0] if "/" in image else "your-registry"
+                self.ui.error(
+                    "Push failed: not authenticated to registry.",
+                    hint=f"Run: docker login {registry_host}",
+                )
+            else:
+                self.ui.error(
+                    f"Push failed (exit code: {result.get('returncode')})",
+                    hint="Verify registry credentials and image name",
+                )
             output = result.get("output", "")
             if output:
                 self.ui.console.print(output)
