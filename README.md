@@ -32,11 +32,15 @@ moira workload new hermes \
   --workspace-mount /workspace
 
 moira deploy local
+docker compose -f docker-compose.yml -f .moiraweave/deploy/docker-compose.workloads.yml up -d
 moira workload deploy hermes
 moira workload status hermes
 moira agent session create hermes
 moira agent channel-message hermes telegram user-123 "hello"
 ```
+
+`moira init` writes a local `docker-compose.yml` with the Ops dashboard enabled
+by default at `http://localhost:3000`.
 
 ## Command Surface
 
@@ -74,5 +78,5 @@ uv run pytest
 ## Related Repositories
 
 - [moiraweave-core](https://github.com/moiraweave-labs/moiraweave-core): runtime services and infrastructure
-- [moiraweave-ui](https://github.com/moiraweave-labs/moiraweave-ui): optional Ops dashboard
+- [moiraweave-ui](https://github.com/moiraweave-labs/moiraweave-ui): integrated Ops dashboard
 - [moiraweave-docs](https://github.com/moiraweave-labs/moiraweave-docs): documentation site

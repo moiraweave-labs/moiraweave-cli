@@ -169,6 +169,17 @@ class TestCLIWorkloads:
         assert generated.exists()
         assert "mock-agent" in generated.read_text(encoding="utf-8")
 
+    def test_init_compose_includes_integrated_ui(
+        self, initialized_workspace: Path
+    ) -> None:
+        compose = yaml.safe_load(
+            (initialized_workspace / "docker-compose.yml").read_text(encoding="utf-8")
+        )
+        ui = compose["services"]["ui"]
+        assert ui["image"] == "ghcr.io/moiraweave-labs/moiraweave-ui:latest"
+        assert "profiles" not in ui
+        assert ui["ports"] == ["${MOIRAWEAVE_UI_PORT:-3000}:80"]
+
 
 class TestCLIDefaults:
     def test_init_noninteractive_flag_recognized(

@@ -177,6 +177,8 @@ def ensure_local_env(repo_root: Path) -> None:
         f"JWT_SECRET_KEY={secret}\n"
         "JWT_ALGORITHM=HS256\n"
         "JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30\n"
+        "API_GATEWAY_PORT=8000\n"
+        "MOIRAWEAVE_UI_PORT=3000\n"
         "POSTGRES_DB=moiraweave\n"
         "POSTGRES_USER=moiraweave\n"
         "POSTGRES_PASSWORD=moiraweave-dev\n"

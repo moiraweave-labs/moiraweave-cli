@@ -75,7 +75,8 @@ class ProjectInitCommand(BaseCommand):
                     "Create an agent workload",
                 ),
                 (2, "moira deploy local", "Generate local workload compose"),
-                (3, "moira run submit hermes --input '{}'", "Submit a run"),
+                (3, "docker compose up -d", "Start API, worker, storage, and UI"),
+                (4, "open http://localhost:3000", "Open the Ops dashboard"),
             ],
         )
 

@@ -52,6 +52,18 @@ class TestInitWorkflow:
             expected = workspace / config[dir_key]
             assert expected.exists(), f"Directory {config[dir_key]} was not created"
 
+    def test_generated_compose_includes_ui_by_default(self, workspace: Path) -> None:
+        compose = yaml.safe_load((workspace / "docker-compose.yml").read_text())
+        ui = compose["services"]["ui"]
+        assert ui["image"] == "ghcr.io/moiraweave-labs/moiraweave-ui:latest"
+        assert "profiles" not in ui
+        assert ui["environment"]["API_PROXY_PASS"] == "http://api-gateway:8000"
+
+    def test_generated_env_exposes_platform_ports(self, workspace: Path) -> None:
+        env_text = (workspace / ".env").read_text()
+        assert "API_GATEWAY_PORT=8000" in env_text
+        assert "MOIRAWEAVE_UI_PORT=3000" in env_text
+
 
 @pytest.mark.integration
 class TestWorkloadScaffolding:
