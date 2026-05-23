@@ -112,7 +112,11 @@ class TestCLIWorkloads:
         assert result.returncode == 0, result.stderr
 
         manifest_path = (
-            initialized_workspace / ".moiraweave" / "workloads" / "hermes" / "workload.yaml"
+            initialized_workspace
+            / ".moiraweave"
+            / "workloads"
+            / "hermes"
+            / "workload.yaml"
         )
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         assert manifest["metadata"]["name"] == "hermes"
@@ -186,7 +190,12 @@ class TestCLIWorkloads:
             text=True,
         )
         assert result.returncode == 0, result.stderr
-        generated = initialized_workspace / ".moiraweave" / "deploy" / "docker-compose.workloads.yml"
+        generated = (
+            initialized_workspace
+            / ".moiraweave"
+            / "deploy"
+            / "docker-compose.workloads.yml"
+        )
         assert generated.exists()
         assert "mock-agent" in generated.read_text(encoding="utf-8")
 

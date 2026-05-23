@@ -27,7 +27,9 @@ from moira_cli.io import (
 from moira_cli.ui import get_ui
 
 DEFAULT_API_URL = "http://localhost:8000"
-_PLATFORM_SERVICES = frozenset({"api-gateway", "worker", "postgres", "redis", "qdrant", "ui"})
+_PLATFORM_SERVICES = frozenset(
+    {"api-gateway", "worker", "postgres", "redis", "qdrant", "ui"}
+)
 _TERMINAL_RUN_STATES = {"succeeded", "failed", "canceled", "lost"}
 
 console = Console()
@@ -572,19 +574,25 @@ def workload_new(
 ) -> None:
     """Create a workload.yaml manifest."""
     if workload_type not in {"model-service", "pipeline", "agent-service"}:
-        _exit_with_error("Invalid workload type. Use model-service, pipeline, or agent-service.")
+        _exit_with_error(
+            "Invalid workload type. Use model-service, pipeline, or agent-service."
+        )
     if mode not in {"sync", "async", "session"}:
         _exit_with_error("Invalid execution mode. Use sync, async, or session.")
     if adapter not in {"generic-http", "hermes", "openclaw"}:
         _exit_with_error("Invalid adapter. Use generic-http, hermes, or openclaw.")
     if workload_type != "pipeline" and not image:
-        _exit_with_error("--image is required for model-service and agent-service workloads")
+        _exit_with_error(
+            "--image is required for model-service and agent-service workloads"
+        )
     env_values = _parse_key_value_options(env_var, option="--env")
 
     repo_root = _repo_root()
     target = _workload_file(repo_root, name)
     if target.exists() and not force:
-        _exit_with_error(f"Workload already exists: {name}", hint="Use --force to overwrite")
+        _exit_with_error(
+            f"Workload already exists: {name}", hint="Use --force to overwrite"
+        )
 
     manifest: dict[str, Any] = {
         "apiVersion": "moiraweave.io/v1alpha1",
@@ -858,7 +866,16 @@ def deploy_local(
     if up:
         ui.info(
             _run_command(
-                ["docker", "compose", "-f", "docker-compose.yml", "-f", str(output), "up", "-d"],
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    "docker-compose.yml",
+                    "-f",
+                    str(output),
+                    "up",
+                    "-d",
+                ],
                 cwd=repo_root,
             )
         )
@@ -866,7 +883,9 @@ def deploy_local(
 
 @deploy_app.command("k8s")
 def deploy_k8s(
-    apply: bool = typer.Option(False, "--apply", help="Run helm upgrade after generating."),
+    apply: bool = typer.Option(
+        False, "--apply", help="Run helm upgrade after generating."
+    ),
     env: str = typer.Option("dev", "--env"),
 ) -> None:
     """Generate Helm values from workload manifests."""

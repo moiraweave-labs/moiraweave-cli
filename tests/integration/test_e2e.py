@@ -104,7 +104,9 @@ class TestWorkloadScaffolding:
             cwd=workspace,
         )
         config = yaml.safe_load((workspace / "moiraweave.yaml").read_text())
-        workload_yaml = workspace / config["workloads_dir"] / "mock-model" / "workload.yaml"
+        workload_yaml = (
+            workspace / config["workloads_dir"] / "mock-model" / "workload.yaml"
+        )
         parsed = yaml.safe_load(workload_yaml.read_text())
         assert parsed["kind"] == "Workload"
         assert parsed["spec"]["type"] == "model-service"
@@ -144,7 +146,9 @@ class TestDeployGeneration:
             cwd=workspace,
         )
         _run(["deploy", "local"], cwd=workspace)
-        generated = workspace / ".moiraweave" / "deploy" / "docker-compose.workloads.yml"
+        generated = (
+            workspace / ".moiraweave" / "deploy" / "docker-compose.workloads.yml"
+        )
         parsed = yaml.safe_load(generated.read_text())
         assert "mock-agent" in parsed["services"]
 
