@@ -150,6 +150,18 @@ def _read_json_file(path: pathlib.Path) -> dict[str, Any]:
         _exit_with_error(f"Invalid JSON in {path}: {exc}")
 
 
+def _parse_key_value_options(values: list[str], *, option: str) -> dict[str, str]:
+    """Parse repeated KEY=VALUE CLI options."""
+    parsed: dict[str, str] = {}
+    for raw in values:
+        key, separator, value = raw.partition("=")
+        key = key.strip()
+        if not separator or not key:
+            _exit_with_error(f"Invalid {option} value: {raw}", hint="Use KEY=VALUE")
+        parsed[key] = value
+    return parsed
+
+
 def _required_inputs_for_task(tasks_root: pathlib.Path, task_name: str) -> set[str]:
     """Get required input tensor names for a task.
 
@@ -501,6 +513,11 @@ def workload_new(
     mode: str = typer.Option("session", "--mode", help="sync, async, or session."),
     timeout_seconds: int = typer.Option(3600, "--timeout-seconds", min=1),
     port: list[int] = typer.Option([], "--port", help="Expose TCP port."),
+    env_var: list[str] = typer.Option(
+        [],
+        "--env",
+        help="Runtime environment variable as KEY=VALUE.",
+    ),
     secret: list[str] = typer.Option([], "--secret", help="Required secret env var."),
     adapter: str = typer.Option(
         "generic-http",
@@ -517,11 +534,37 @@ def workload_new(
         "--workspace-mount",
         help="Agent workspace mount path, for example /workspace.",
     ),
+    auth_token_env: str | None = typer.Option(
+        None,
+        "--auth-token-env",
+        help="Environment variable containing the runtime API token.",
+    ),
+    agent_id: str | None = typer.Option(
+        None,
+        "--agent-id",
+        help="Runtime-specific agent id, for example an OpenClaw agent record.",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Runtime model/profile name advertised by the agent server.",
+    ),
+    instructions: str | None = typer.Option(
+        None,
+        "--instructions",
+        help="Additional per-frontend instructions sent to the agent runtime.",
+    ),
     dispatch_timeout_seconds: float = typer.Option(
         30.0,
         "--dispatch-timeout-seconds",
         min=0.1,
         help="Max seconds MoiraWeave waits for an agent dispatch ack.",
+    ),
+    poll_interval_seconds: float = typer.Option(
+        2.0,
+        "--poll-interval-seconds",
+        min=0.1,
+        help="Seconds between runtime status polls for long-running agent turns.",
     ),
     persistence: bool = typer.Option(False, "--persistence"),
     mount_path: str = typer.Option("/data", "--mount-path"),
@@ -536,6 +579,7 @@ def workload_new(
         _exit_with_error("Invalid adapter. Use generic-http, hermes, or openclaw.")
     if workload_type != "pipeline" and not image:
         _exit_with_error("--image is required for model-service and agent-service workloads")
+    env_values = _parse_key_value_options(env_var, option="--env")
 
     repo_root = _repo_root()
     target = _workload_file(repo_root, name)
@@ -558,6 +602,7 @@ def workload_new(
                 "mountPath": mount_path if persistence else None,
             },
             "secrets": list(secret),
+            "env": env_values,
         },
     }
     if image:
@@ -568,7 +613,12 @@ def workload_new(
             "requiredSecrets": list(secret),
             "exposedChannels": list(dict.fromkeys(channel)),
             "workspaceMount": workspace_mount,
+            "authTokenEnv": auth_token_env,
+            "agentId": agent_id,
+            "model": model,
+            "instructions": instructions,
             "dispatchTimeoutSeconds": dispatch_timeout_seconds,
+            "pollIntervalSeconds": poll_interval_seconds,
         }
 
     _write_manifest(target, manifest)

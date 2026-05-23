@@ -81,7 +81,13 @@ class TestCLIWorkloads:
                 "--image",
                 "ghcr.io/nousresearch/hermes-agent:latest",
                 "--port",
-                "8000",
+                "8642",
+                "--env",
+                "API_SERVER_ENABLED=true",
+                "--env",
+                "API_SERVER_HOST=0.0.0.0",
+                "--env",
+                "API_SERVER_PORT=8642",
                 "--secret",
                 "OPENAI_API_KEY",
                 "--adapter",
@@ -90,6 +96,14 @@ class TestCLIWorkloads:
                 "telegram",
                 "--workspace-mount",
                 "/workspace",
+                "--auth-token-env",
+                "HERMES_API_SERVER_KEY",
+                "--model",
+                "hermes-agent",
+                "--instructions",
+                "Be operational.",
+                "--poll-interval-seconds",
+                "1.5",
             ],
             cwd=initialized_workspace,
             capture_output=True,
@@ -103,9 +117,16 @@ class TestCLIWorkloads:
         manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         assert manifest["metadata"]["name"] == "hermes"
         assert manifest["spec"]["type"] == "agent-service"
-        assert manifest["spec"]["ports"][0]["port"] == 8000
+        assert manifest["spec"]["ports"][0]["port"] == 8642
+        assert manifest["spec"]["env"]["API_SERVER_ENABLED"] == "true"
+        assert manifest["spec"]["env"]["API_SERVER_HOST"] == "0.0.0.0"
+        assert manifest["spec"]["env"]["API_SERVER_PORT"] == "8642"
         assert manifest["spec"]["agent"]["adapter"] == "hermes"
         assert manifest["spec"]["agent"]["workspaceMount"] == "/workspace"
+        assert manifest["spec"]["agent"]["authTokenEnv"] == "HERMES_API_SERVER_KEY"
+        assert manifest["spec"]["agent"]["model"] == "hermes-agent"
+        assert manifest["spec"]["agent"]["instructions"] == "Be operational."
+        assert manifest["spec"]["agent"]["pollIntervalSeconds"] == 1.5
         assert "telegram" in manifest["spec"]["agent"]["exposedChannels"]
 
     def test_workload_list_succeeds(
