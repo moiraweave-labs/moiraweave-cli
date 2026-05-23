@@ -10,7 +10,7 @@ from moira_cli.ui import get_ui
 
 
 def find_repo_root() -> Path:
-    """Find repository root by looking for tasks/ and steps/ directories.
+    """Find repository root by looking for a MoiraWeave workspace.
 
     :returns: Repository root path.
     :raises FileNotFoundError: If workspace not found.
@@ -19,11 +19,7 @@ def find_repo_root() -> Path:
     for candidate in [current, *current.parents]:
         if (candidate / "moiraweave.yaml").is_file():
             return candidate
-        if (candidate / "tasks").is_dir() and (candidate / "steps").is_dir():
-            return candidate
-        if (candidate / ".moiraweave" / "tasks").is_dir() and (
-            candidate / ".moiraweave" / "steps"
-        ).is_dir():
+        if (candidate / ".moiraweave" / "workloads").is_dir():
             return candidate
     raise FileNotFoundError(
         "Not in a MoiraWeave workspace. "

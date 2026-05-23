@@ -1,118 +1,66 @@
 # MoiraWeave CLI
 
-[![CI](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/ci.yml)
-[![Release Please](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/release.yml)
-[![Publish to PyPI](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/publish.yml/badge.svg?branch=main)](https://github.com/moiraweave-labs/moiraweave-cli/actions/workflows/publish.yml)
-[![PyPI](https://img.shields.io/pypi/v/moiraweave-cli)](https://pypi.org/project/moiraweave-cli/)
-[![Docs](https://img.shields.io/badge/docs-live-blue)](https://moiraweave-labs.github.io/moiraweave-docs/)
-[![Python](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+Developer CLI for creating and operating MoiraWeave workspaces.
 
-Developer CLI for creating, running, and operating MoiraWeave workspaces.
+MoiraWeave is a self-hosted operations platform for AI workloads: model
+services, pipelines, and agent runtimes. The CLI owns the local user workflow:
+workspace init, workload manifests, runs, agent sessions, and deployment asset
+generation.
 
-## Why this repository exists
-
-`moiraweave-cli` is the entry point for platform users. It provides a single command surface for:
-
-- workspace initialization
-- step scaffolding and catalog integration
-- pipeline creation and validation
-- local runtime orchestration
-- deployment commands and job inspection
-
-## Install and Update (uv-style)
-
-### Install from PyPI
+## Install
 
 ```bash
 uv tool install moiraweave-cli
-moira --version
 moira --help
-```
-
-### Upgrade to latest
-
-```bash
-uv tool upgrade moiraweave-cli
-```
-
-### Pin to a specific version
-
-```bash
-uv tool install moiraweave-cli==0.1.1
-```
-
-### Reinstall cleanly
-
-```bash
-uv tool uninstall moiraweave-cli
-uv tool install moiraweave-cli
-```
-
-### Install from GitHub (main branch)
-
-```bash
-uv tool install "git+https://github.com/moiraweave-labs/moiraweave-cli"
-```
-
-### Install from local source (for contributors)
-
-```bash
-uv tool install --editable .
-```
-
-### Verify resolution and tool path
-
-```bash
-uv tool list
-which moira
-```
-
-### Fallback (if you do not use uv)
-
-```bash
-pipx install moiraweave-cli
-pipx upgrade moiraweave-cli
 ```
 
 ## Quickstart
 
 ```bash
-# 1) Initialize a workspace
-moira project init
-cd my-project-moira
+moira init
 
-# 2) Create a custom step
-moira step new my-task my-impl
+moira workload new hermes \
+  --type agent-service \
+  --image ghcr.io/nousresearch/hermes-agent:latest \
+  --mode session \
+  --timeout-seconds 172800 \
+  --adapter hermes \
+  --port 8000 \
+  --secret OPENAI_API_KEY \
+  --persistence \
+  --mount-path /data \
+  --workspace-mount /workspace
 
-# 3) Create and validate a pipeline
-moira pipeline new my-pipeline
-moira pipeline validate my-pipeline
-
-# 4) Run locally
-moira pipeline dev my-pipeline
+moira deploy local
+moira workload deploy hermes
+moira workload status hermes
+moira agent session create hermes
+moira agent channel-message hermes telegram user-123 "hello"
 ```
 
-## Workspace ownership model
+## Command Surface
 
-Your product code lives in your own workspace repository, not in upstream MoiraWeave repos:
+- `moira init`: create a MoiraWeave workspace.
+- `moira workload new|list|show|deploy|status|logs`: manage workload manifests.
+- `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
+- `moira agent session create|message|history`: interact with agent sessions.
+- `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress.
+- `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
+
+## Workspace Model
 
 ```text
-your-company-moira/
+your-workspace/
   moiraweave.yaml
   .env
-  src/                 # your product code
-  notebooks/           # optional user assets
   .moiraweave/
-    pipelines/
-    steps/
-    tasks/
+    workloads/
+    artifacts/
     deploy/
 ```
 
-MoiraWeave keeps generated runtime scaffolding under `.moiraweave/` to avoid mixing
-platform artifacts with user application code, following the same hidden-workspace
-pattern used by modern developer tooling.
+Workloads are ordinary YAML manifests. MoiraWeave deploys and observes the
+runtime, but model and agent internals stay inside the workload image.
 
 ## Development
 
@@ -123,14 +71,8 @@ uv run mypy moira_cli
 uv run pytest
 ```
 
-## Releases
-
-- `release.yml` manages automated versioning/changelog updates via Release Please.
-- `publish.yml` publishes release artifacts to PyPI.
-
-## Related repositories
+## Related Repositories
 
 - [moiraweave-core](https://github.com/moiraweave-labs/moiraweave-core): runtime services and infrastructure
-- [moiraweave-steps](https://github.com/moiraweave-labs/moiraweave-steps): official step catalog
+- [moiraweave-ui](https://github.com/moiraweave-labs/moiraweave-ui): optional Ops dashboard
 - [moiraweave-docs](https://github.com/moiraweave-labs/moiraweave-docs): documentation site
-- [.github](https://github.com/moiraweave-labs/.github): org-wide policies and templates

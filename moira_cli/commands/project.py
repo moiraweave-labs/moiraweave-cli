@@ -69,14 +69,13 @@ class ProjectInitCommand(BaseCommand):
         self.ui.next_steps(
             "Next steps",
             [
-                (1, "moira step new <task> <impl>", "Scaffold a new step"),
                 (
-                    2,
-                    "moira step add --from-catalog text-embed-fastembed",
-                    "Add official step",
+                    1,
+                    "moira workload new hermes --type agent-service --image ghcr.io/nousresearch/hermes-agent:latest",
+                    "Create an agent workload",
                 ),
-                (3, "moira pipeline new <name>", "Scaffold a pipeline"),
-                (4, "moira pipeline dev <name>", "Test locally"),
+                (2, "moira deploy local", "Generate local workload compose"),
+                (3, "moira run submit hermes --input '{}'", "Submit a run"),
             ],
         )
 

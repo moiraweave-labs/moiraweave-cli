@@ -27,14 +27,20 @@ from moira_cli.io import (
 from moira_cli.ui import get_ui
 
 DEFAULT_API_URL = "http://localhost:8000"
-_PLATFORM_SERVICES = frozenset({"api-gateway", "worker", "redis", "qdrant"})
+_PLATFORM_SERVICES = frozenset({"api-gateway", "worker", "postgres", "redis", "qdrant", "ui"})
+_TERMINAL_RUN_STATES = {"succeeded", "failed", "canceled", "lost"}
 
 console = Console()
 ui = get_ui()
 app = typer.Typer(
-    help="MoiraWeave CLI — build, test, and operate MLOps pipelines",
+    help="MoiraWeave CLI — deploy and operate AI workloads",
     no_args_is_help=True,
 )
+workload_app = typer.Typer(help="Manage workloads")
+run_app = typer.Typer(help="Submit, watch, and cancel runs")
+agent_app = typer.Typer(help="Manage agent sessions")
+agent_session_app = typer.Typer(help="Create and message agent sessions")
+deploy_app = typer.Typer(help="Generate or apply deployment assets")
 task_app = typer.Typer(help="Manage tasks")
 step_app = typer.Typer(help="Manage steps")
 
@@ -49,11 +55,11 @@ app.add_typer(
     name="flow",
     help="Show workspace as a visual dependency tree",
 )
-app.add_typer(task_app, name="task")
-app.add_typer(step_app, name="step")
-app.add_typer(pipeline_app, name="pipeline")
-app.add_typer(models_app, name="models")
-app.add_typer(job_app, name="job")
+app.add_typer(workload_app, name="workload")
+app.add_typer(run_app, name="run")
+app.add_typer(agent_app, name="agent")
+app.add_typer(deploy_app, name="deploy")
+agent_app.add_typer(agent_session_app, name="session")
 
 
 def _repo_root() -> pathlib.Path:
@@ -321,6 +327,528 @@ def _parse_json_input(input_value: str) -> dict[str, Any]:
         _exit_with_error("Input JSON must be an object.")
     except json.JSONDecodeError:
         return {"raw_input": input_value}
+
+
+def _workloads_root(repo_root: pathlib.Path) -> pathlib.Path:
+    try:
+        config = load_moiraweave_config(repo_root)
+        return repo_root / config.workloads_dir
+    except Exception:
+        return repo_root / ".moiraweave" / "workloads"
+
+
+def _artifacts_root(repo_root: pathlib.Path) -> pathlib.Path:
+    try:
+        config = load_moiraweave_config(repo_root)
+        return repo_root / config.artifacts_dir
+    except Exception:
+        return repo_root / ".moiraweave" / "artifacts"
+
+
+def _deploy_root(repo_root: pathlib.Path) -> pathlib.Path:
+    try:
+        config = load_moiraweave_config(repo_root)
+        return repo_root / config.deploy_dir
+    except Exception:
+        return repo_root / ".moiraweave" / "deploy"
+
+
+def _workload_file(repo_root: pathlib.Path, name: str) -> pathlib.Path:
+    return _workloads_root(repo_root) / name / "workload.yaml"
+
+
+def _load_workload_manifests(repo_root: pathlib.Path) -> list[dict[str, Any]]:
+    root = _workloads_root(repo_root)
+    manifests: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*/workload.yaml")):
+        manifest = _load_yaml_file(path)
+        manifest["_path"] = str(path)
+        manifests.append(manifest)
+    return manifests
+
+
+def _workload_name(manifest: dict[str, Any]) -> str:
+    metadata = manifest.get("metadata", {})
+    if isinstance(metadata, dict):
+        return str(metadata.get("name", ""))
+    return ""
+
+
+def _workload_type(manifest: dict[str, Any]) -> str:
+    spec = manifest.get("spec", {})
+    if isinstance(spec, dict):
+        return str(spec.get("type", ""))
+    return ""
+
+
+def _write_manifest(path: pathlib.Path, manifest: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+
+def _watch_run(run_id: str, api_url: str, timeout: int) -> None:
+    with Progress(
+        SpinnerColumn(style="cyan"),
+        TextColumn("{task.description}", style="dim"),
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Watching run {run_id}... (0s)", total=None)
+        for elapsed in range(timeout):
+            status_payload = _request_json("GET", f"{api_url}/v1/runs/{run_id}")
+            state = str(status_payload.get("status", "unknown"))
+            progress.update(
+                task,
+                description=f"Watching run {run_id}... ({elapsed}s) [{state}]",
+            )
+            if state in _TERMINAL_RUN_STATES:
+                progress.stop()
+                console.print(Syntax(json.dumps(status_payload, indent=2), "json"))
+                return
+            time.sleep(1)
+        progress.stop()
+    _exit_with_error(f"Timed out after {timeout}s watching run {run_id}")
+
+
+def _render_local_workload_compose(
+    manifests: list[dict[str, Any]],
+    repo_root: pathlib.Path,
+) -> dict[str, Any]:
+    services: dict[str, Any] = {}
+    artifacts_root = _artifacts_root(repo_root)
+    for manifest in manifests:
+        name = _workload_name(manifest)
+        spec = manifest.get("spec", {})
+        if not name or not isinstance(spec, dict):
+            continue
+        image = spec.get("image")
+        if not image:
+            continue
+
+        service: dict[str, Any] = {
+            "image": image,
+            "restart": "unless-stopped",
+            "environment": dict(spec.get("env") or {}),
+        }
+        for secret in spec.get("secrets") or []:
+            service["environment"][str(secret)] = f"${{{secret}:?set {secret}}}"
+        agent = spec.get("agent") or {}
+        if isinstance(agent, dict):
+            for secret in agent.get("requiredSecrets") or []:
+                service["environment"][str(secret)] = f"${{{secret}:?set {secret}}}"
+
+        ports = []
+        for index, port_def in enumerate(spec.get("ports") or []):
+            if not isinstance(port_def, dict):
+                continue
+            port = port_def.get("port")
+            target = port_def.get("targetPort") or port
+            if port and target:
+                ports.append(f"{port}:{target}")
+        if ports:
+            service["ports"] = ports
+
+        persistence = spec.get("persistence") or {}
+        if isinstance(persistence, dict) and persistence.get("enabled"):
+            mount_path = persistence.get("mountPath")
+            if mount_path:
+                host_path = artifacts_root / name
+                host_path.mkdir(parents=True, exist_ok=True)
+                service["volumes"] = [f"{host_path}:{mount_path}"]
+        if isinstance(agent, dict) and agent.get("workspaceMount"):
+            host_path = artifacts_root / name / "workspace"
+            host_path.mkdir(parents=True, exist_ok=True)
+            service.setdefault("volumes", []).append(
+                f"{host_path}:{agent['workspaceMount']}"
+            )
+
+        if spec.get("command"):
+            service["command"] = spec["command"]
+        if spec.get("args"):
+            service["command"] = [*service.get("command", []), *spec["args"]]
+
+        if not service["environment"]:
+            service.pop("environment")
+        services[name] = service
+
+    return {"services": services}
+
+
+def _render_helm_values(manifests: list[dict[str, Any]]) -> dict[str, Any]:
+    workloads: dict[str, Any] = {}
+    for manifest in manifests:
+        name = _workload_name(manifest)
+        spec = manifest.get("spec", {})
+        metadata = manifest.get("metadata", {})
+        if not name or not isinstance(spec, dict):
+            continue
+        workloads[name] = {
+            "enabled": True,
+            "metadata": metadata if isinstance(metadata, dict) else {"name": name},
+            **spec,
+        }
+    return {"workloads": workloads}
+
+
+@workload_app.command("new")
+def workload_new(
+    name: str = typer.Argument(..., help="Workload name."),
+    workload_type: str = typer.Option(
+        "agent-service",
+        "--type",
+        help="model-service, pipeline, or agent-service.",
+    ),
+    image: str | None = typer.Option(None, "--image", help="Container image."),
+    mode: str = typer.Option("session", "--mode", help="sync, async, or session."),
+    timeout_seconds: int = typer.Option(3600, "--timeout-seconds", min=1),
+    port: list[int] = typer.Option([], "--port", help="Expose TCP port."),
+    secret: list[str] = typer.Option([], "--secret", help="Required secret env var."),
+    adapter: str = typer.Option(
+        "generic-http",
+        "--adapter",
+        help="Agent adapter: generic-http, hermes, or openclaw.",
+    ),
+    channel: list[str] = typer.Option(
+        ["ui", "api"],
+        "--channel",
+        help="Exposed agent interaction channel.",
+    ),
+    workspace_mount: str | None = typer.Option(
+        None,
+        "--workspace-mount",
+        help="Agent workspace mount path, for example /workspace.",
+    ),
+    dispatch_timeout_seconds: float = typer.Option(
+        30.0,
+        "--dispatch-timeout-seconds",
+        min=0.1,
+        help="Max seconds MoiraWeave waits for an agent dispatch ack.",
+    ),
+    persistence: bool = typer.Option(False, "--persistence"),
+    mount_path: str = typer.Option("/data", "--mount-path"),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    """Create a workload.yaml manifest."""
+    if workload_type not in {"model-service", "pipeline", "agent-service"}:
+        _exit_with_error("Invalid workload type. Use model-service, pipeline, or agent-service.")
+    if mode not in {"sync", "async", "session"}:
+        _exit_with_error("Invalid execution mode. Use sync, async, or session.")
+    if adapter not in {"generic-http", "hermes", "openclaw"}:
+        _exit_with_error("Invalid adapter. Use generic-http, hermes, or openclaw.")
+    if workload_type != "pipeline" and not image:
+        _exit_with_error("--image is required for model-service and agent-service workloads")
+
+    repo_root = _repo_root()
+    target = _workload_file(repo_root, name)
+    if target.exists() and not force:
+        _exit_with_error(f"Workload already exists: {name}", hint="Use --force to overwrite")
+
+    manifest: dict[str, Any] = {
+        "apiVersion": "moiraweave.io/v1alpha1",
+        "kind": "Workload",
+        "metadata": {"name": name},
+        "spec": {
+            "type": workload_type,
+            "execution": {"mode": mode, "timeoutSeconds": timeout_seconds},
+            "ports": [
+                {"name": "http" if index == 0 else f"port-{value}", "port": value}
+                for index, value in enumerate(port)
+            ],
+            "persistence": {
+                "enabled": persistence,
+                "mountPath": mount_path if persistence else None,
+            },
+            "secrets": list(secret),
+        },
+    }
+    if image:
+        manifest["spec"]["image"] = image
+    if workload_type == "agent-service":
+        manifest["spec"]["agent"] = {
+            "adapter": adapter,
+            "requiredSecrets": list(secret),
+            "exposedChannels": list(dict.fromkeys(channel)),
+            "workspaceMount": workspace_mount,
+            "dispatchTimeoutSeconds": dispatch_timeout_seconds,
+        }
+
+    _write_manifest(target, manifest)
+    ui.success(f"Created workload manifest: {target.relative_to(repo_root)}")
+
+
+@workload_app.command("list")
+def workload_list() -> None:
+    """List local workload manifests."""
+    repo_root = _repo_root()
+    items = [
+        {
+            "name": _workload_name(manifest),
+            "type": _workload_type(manifest),
+            "path": str(pathlib.Path(str(manifest["_path"])).relative_to(repo_root)),
+        }
+        for manifest in _load_workload_manifests(repo_root)
+    ]
+    console.print(Syntax(json.dumps(items, indent=2), "json"))
+
+
+@workload_app.command("show")
+def workload_show(name: str = typer.Argument(..., help="Workload name.")) -> None:
+    """Show a local workload manifest."""
+    repo_root = _repo_root()
+    path = _workload_file(repo_root, name)
+    if not path.exists():
+        _exit_with_error(f"Workload not found: {name}")
+    console.print(Syntax(path.read_text(encoding="utf-8"), "yaml"))
+
+
+@workload_app.command("deploy")
+def workload_deploy(
+    name: str = typer.Argument(..., help="Workload name."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Register one workload manifest with the API gateway."""
+    repo_root = _repo_root()
+    path = _workload_file(repo_root, name)
+    if not path.exists():
+        _exit_with_error(f"Workload not found: {name}")
+    response = _request_json("POST", f"{api_url}/v1/workloads", _load_yaml_file(path))
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+
+
+@workload_app.command("status")
+def workload_status(
+    name: str = typer.Argument(..., help="Workload name."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Show API-visible workload health, deployments, and recent runs."""
+    workload = _request_json("GET", f"{api_url}/v1/workloads/{name}")
+    console.print(Syntax(json.dumps(workload, indent=2), "json"))
+    health = _request_json("GET", f"{api_url}/v1/workloads/{name}/health")
+    console.print(Syntax(json.dumps(health, indent=2), "json"))
+    runs = _request_json("GET", f"{api_url}/v1/runs?workload_name={name}&limit=5")
+    console.print(Syntax(json.dumps(runs, indent=2), "json"))
+
+
+@workload_app.command("logs")
+def workload_logs(
+    name: str = typer.Argument(..., help="Workload name."),
+    follow: bool = typer.Option(False, "--follow", "-f"),
+    env: str = typer.Option("local", "--env"),
+) -> None:
+    """Show logs for a local Compose or Kubernetes workload service."""
+    repo_root = _repo_root()
+    if env == "local":
+        command = ["docker", "compose", "logs", "--tail", "200"]
+        if follow:
+            command.append("-f")
+        command.append(name)
+        ui.info(_run_command(command, cwd=repo_root))
+        return
+    config = load_moiraweave_config(repo_root)
+    target = config.environments.get(env)
+    namespace = target.namespace if target and target.namespace else "moiraweave"
+    command = [
+        "kubectl",
+        "logs",
+        "-n",
+        namespace,
+        "-l",
+        f"moiraweave.io/workload={name}",
+        "--tail",
+        "200",
+    ]
+    if follow:
+        command.append("-f")
+    ui.info(_run_command(command, cwd=repo_root))
+
+
+@run_app.command("submit")
+def run_submit(
+    workload: str = typer.Argument(..., help="Workload name."),
+    input_data: str = typer.Option("{}", "--input", help="Input JSON or @file path."),
+    watch: bool = typer.Option(False, "--watch"),
+    timeout: int = typer.Option(3600, "--timeout", min=1),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Submit a run to a workload."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/v1/workloads/{workload}/runs",
+        {"payload": _parse_json_input(input_data)},
+    )
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+    run_id = str(response.get("run_id", ""))
+    if watch and run_id:
+        _watch_run(run_id, api_url, timeout)
+
+
+@run_app.command("watch")
+def run_watch(
+    run_id: str = typer.Argument(..., help="Run ID."),
+    timeout: int = typer.Option(3600, "--timeout", min=1),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Watch a run until it reaches a terminal state."""
+    _watch_run(run_id, api_url, timeout)
+
+
+@run_app.command("cancel")
+def run_cancel(
+    run_id: str = typer.Argument(..., help="Run ID."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Request cooperative cancellation for a run."""
+    response = _request_json("POST", f"{api_url}/v1/runs/{run_id}/cancel")
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+
+
+@run_app.command("events")
+def run_events(
+    run_id: str = typer.Argument(..., help="Run ID."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Show stored events for a run."""
+    response = _request_json("GET", f"{api_url}/v1/runs/{run_id}/events")
+    console.print(Syntax(json.dumps(response.get("data", response), indent=2), "json"))
+
+
+@run_app.command("artifacts")
+def run_artifacts(
+    run_id: str = typer.Argument(..., help="Run ID."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """List artifacts for a run."""
+    response = _request_json("GET", f"{api_url}/v1/runs/{run_id}/artifacts")
+    console.print(Syntax(json.dumps(response.get("data", response), indent=2), "json"))
+
+
+@agent_session_app.command("create")
+def agent_session_create(
+    agent: str = typer.Argument(..., help="Agent workload name."),
+    metadata: str = typer.Option("{}", "--metadata", help="Metadata JSON."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Create an agent session."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/v1/agents/{agent}/sessions",
+        {"metadata": _parse_json_input(metadata)},
+    )
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+
+
+@agent_session_app.command("message")
+def agent_session_message(
+    agent: str = typer.Argument(..., help="Agent workload name."),
+    session_id: str = typer.Argument(..., help="Session ID."),
+    message: str = typer.Argument(..., help="Message text."),
+    context: str = typer.Option("{}", "--context", help="Context JSON."),
+    watch: bool = typer.Option(False, "--watch"),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Send a message to an agent session."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/v1/agents/{agent}/sessions/{session_id}/messages",
+        {"message": message, "context": _parse_json_input(context)},
+    )
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+    run_id = str(response.get("run_id", ""))
+    if watch and run_id:
+        _watch_run(run_id, api_url, timeout=3600)
+
+
+@agent_app.command("channel-message")
+def agent_channel_message(
+    agent: str = typer.Argument(..., help="Agent workload name."),
+    channel: str = typer.Argument(..., help="Inbound channel name."),
+    external_user_id: str = typer.Argument(..., help="External channel user id."),
+    message: str = typer.Argument(..., help="Message text."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Simulate an inbound Telegram/Slack/Discord/Webhook message."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/v1/channels/{channel}/agents/{agent}/messages",
+        {
+            "external_user_id": external_user_id,
+            "message": message,
+            "metadata": {},
+        },
+    )
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+
+
+@agent_session_app.command("history")
+def agent_session_history(
+    agent: str = typer.Argument(..., help="Agent workload name."),
+    session_id: str = typer.Argument(..., help="Session ID."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Show messages for an agent session."""
+    response = _request_json(
+        "GET",
+        f"{api_url}/v1/agents/{agent}/sessions/{session_id}/messages",
+    )
+    console.print(Syntax(json.dumps(response.get("data", response), indent=2), "json"))
+
+
+@deploy_app.command("local")
+def deploy_local(
+    up: bool = typer.Option(False, "--up", help="Run docker compose after generating."),
+) -> None:
+    """Generate local Docker Compose services from workload manifests."""
+    repo_root = _repo_root()
+    manifests = _load_workload_manifests(repo_root)
+    compose = _render_local_workload_compose(manifests, repo_root)
+    deploy_root = _deploy_root(repo_root)
+    deploy_root.mkdir(parents=True, exist_ok=True)
+    output = deploy_root / "docker-compose.workloads.yml"
+    output.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+    ui.success(f"Generated {output.relative_to(repo_root)}")
+    if up:
+        ui.info(
+            _run_command(
+                ["docker", "compose", "-f", "docker-compose.yml", "-f", str(output), "up", "-d"],
+                cwd=repo_root,
+            )
+        )
+
+
+@deploy_app.command("k8s")
+def deploy_k8s(
+    apply: bool = typer.Option(False, "--apply", help="Run helm upgrade after generating."),
+    env: str = typer.Option("dev", "--env"),
+) -> None:
+    """Generate Helm values from workload manifests."""
+    repo_root = _repo_root()
+    manifests = _load_workload_manifests(repo_root)
+    values = _render_helm_values(manifests)
+    deploy_root = _deploy_root(repo_root)
+    deploy_root.mkdir(parents=True, exist_ok=True)
+    output = deploy_root / f"values-workloads-{env}.yaml"
+    output.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+    ui.success(f"Generated {output.relative_to(repo_root)}")
+    if apply:
+        config = load_moiraweave_config(repo_root)
+        target = config.environments.get(env)
+        namespace = target.namespace if target and target.namespace else "moiraweave"
+        ui.info(
+            _run_command(
+                [
+                    "helm",
+                    "upgrade",
+                    "--install",
+                    "moiraweave",
+                    "infra/helm/moiraweave",
+                    "--namespace",
+                    namespace,
+                    "--create-namespace",
+                    "-f",
+                    str(output),
+                ],
+                cwd=repo_root,
+            )
+        )
 
 
 def _bump_semver(version: str, kind: str) -> str:

@@ -47,9 +47,8 @@ class MoiraWeaveConfig(BaseModel):
     :param name: Project name.
     :param registry: OCI registry used for images.
     :param environments: Named environment configurations.
-    :param pipelines_dir: Directory containing pipeline definitions.
-    :param steps_dir: Directory containing step packages.
-    :param tasks_dir: Directory containing task schemas.
+    :param workloads_dir: Directory containing workload manifests.
+    :param artifacts_dir: Directory containing local artifacts.
     :param catalogs: Named official step catalogs (e.g., moiraweave-official).
     :param runtime_version: Pinned runtime version for compatibility checks.
     """
@@ -58,6 +57,9 @@ class MoiraWeaveConfig(BaseModel):
     registry: str
     environments: dict[str, EnvironmentConfig] = Field(default_factory=dict)
     catalogs: dict[str, CatalogSourceConfig] = Field(default_factory=dict)
+    workloads_dir: str = ".moiraweave/workloads"
+    artifacts_dir: str = ".moiraweave/artifacts"
+    deploy_dir: str = ".moiraweave/deploy"
     pipelines_dir: str = ".moiraweave/pipelines"
     steps_dir: str = ".moiraweave/steps"
     tasks_dir: str = ".moiraweave/tasks"
