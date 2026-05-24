@@ -153,6 +153,58 @@ class TestDeployGeneration:
         assert "mock-agent" in parsed["services"]
         assert parsed["services"]["mock-agent"]["networks"] == ["moiraweave-net"]
 
+    def test_deploy_local_generates_multiple_agent_services(
+        self, workspace: Path
+    ) -> None:
+        _run(
+            [
+                "workload",
+                "new",
+                "hermes",
+                "--type",
+                "agent-service",
+                "--image",
+                "ghcr.io/nousresearch/hermes-agent:latest",
+                "--port",
+                "8642",
+                "--adapter",
+                "hermes",
+                "--service-name",
+                "hermes",
+            ],
+            cwd=workspace,
+        )
+        _run(
+            [
+                "workload",
+                "new",
+                "openclaw",
+                "--type",
+                "agent-service",
+                "--image",
+                "ghcr.io/openclaw/openclaw:latest",
+                "--port",
+                "18789",
+                "--adapter",
+                "openclaw",
+                "--service-name",
+                "openclaw",
+            ],
+            cwd=workspace,
+        )
+
+        _run(["deploy", "local"], cwd=workspace)
+
+        generated = (
+            workspace / ".moiraweave" / "deploy" / "docker-compose.workloads.yml"
+        )
+        parsed = yaml.safe_load(generated.read_text())
+        assert {"hermes", "openclaw"} <= set(parsed["services"])
+        assert parsed["services"]["hermes"]["networks"] == ["moiraweave-net"]
+        assert parsed["services"]["openclaw"]["networks"] == ["moiraweave-net"]
+        assert parsed["services"]["hermes"]["ports"] == ["8642:8642"]
+        assert parsed["services"]["openclaw"]["ports"] == ["18789:18789"]
+
     def test_deploy_k8s_generates_values(self, workspace: Path) -> None:
         _run(
             [
@@ -171,3 +223,45 @@ class TestDeployGeneration:
         parsed = yaml.safe_load(generated.read_text())
         assert parsed["workloads"]["mock-model"]["type"] == "model-service"
         assert parsed["workloads"]["mock-model"]["deployment"]["mode"] == "managed"
+
+    def test_deploy_k8s_generates_multiple_agent_workloads(
+        self, workspace: Path
+    ) -> None:
+        for name, image, adapter, port in [
+            (
+                "hermes",
+                "ghcr.io/nousresearch/hermes-agent:latest",
+                "hermes",
+                "8642",
+            ),
+            ("openclaw", "ghcr.io/openclaw/openclaw:latest", "openclaw", "18789"),
+        ]:
+            _run(
+                [
+                    "workload",
+                    "new",
+                    name,
+                    "--type",
+                    "agent-service",
+                    "--image",
+                    image,
+                    "--port",
+                    port,
+                    "--adapter",
+                    adapter,
+                    "--service-name",
+                    name,
+                ],
+                cwd=workspace,
+            )
+
+        _run(["deploy", "k8s", "--env", "dev"], cwd=workspace)
+
+        generated = workspace / ".moiraweave" / "deploy" / "values-workloads-dev.yaml"
+        parsed = yaml.safe_load(generated.read_text())
+        assert {"hermes", "openclaw"} <= set(parsed["workloads"])
+        assert parsed["workloads"]["hermes"]["deployment"]["serviceName"] == "hermes"
+        assert (
+            parsed["workloads"]["openclaw"]["deployment"]["serviceName"] == "openclaw"
+        )
+        assert parsed["workloads"]["openclaw"]["agent"]["adapter"] == "openclaw"

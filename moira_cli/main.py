@@ -532,6 +532,92 @@ def _render_helm_values(manifests: list[dict[str, Any]]) -> dict[str, Any]:
     return {"workloads": workloads}
 
 
+def _manifest_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in manifest.items() if key != "_path"}
+
+
+def _deployment_mode(manifest: dict[str, Any]) -> str:
+    spec = manifest.get("spec", {})
+    deployment = spec.get("deployment") if isinstance(spec, dict) else {}
+    if isinstance(deployment, dict):
+        return str(deployment.get("mode", "managed"))
+    return "managed"
+
+
+def _deployment_targets(manifest: dict[str, Any]) -> list[str]:
+    spec = manifest.get("spec", {})
+    deployment = spec.get("deployment") if isinstance(spec, dict) else {}
+    if isinstance(deployment, dict):
+        targets = deployment.get("targets") or ["local", "kubernetes"]
+        if isinstance(targets, list):
+            return [str(target) for target in targets]
+    return ["local", "kubernetes"]
+
+
+def _deployment_service_name(manifest: dict[str, Any]) -> str:
+    spec = manifest.get("spec", {})
+    deployment = spec.get("deployment") if isinstance(spec, dict) else {}
+    if isinstance(deployment, dict) and deployment.get("serviceName"):
+        return str(deployment["serviceName"])
+    return _workload_name(manifest)
+
+
+def _deployment_endpoint(manifest: dict[str, Any]) -> str | None:
+    spec = manifest.get("spec", {})
+    if not isinstance(spec, dict):
+        return None
+    endpoint = spec.get("endpoint")
+    if isinstance(endpoint, str) and endpoint:
+        return endpoint.rstrip("/")
+    ports = spec.get("ports") or []
+    if not ports or not isinstance(ports, list):
+        return None
+    first_port = ports[0]
+    if not isinstance(first_port, dict) or not first_port.get("port"):
+        return None
+    return f"http://{_deployment_service_name(manifest)}:{first_port['port']}"
+
+
+def _record_target(manifest: dict[str, Any], target: str) -> str | None:
+    if _deployment_mode(manifest) == "external":
+        return "external"
+    if target in _deployment_targets(manifest):
+        return target
+    return None
+
+
+def _register_workload_deployments(
+    manifests: list[dict[str, Any]],
+    *,
+    target: str,
+    status: str,
+    api_url: str,
+) -> None:
+    registered = 0
+    for manifest in manifests:
+        name = _workload_name(manifest)
+        record_target = _record_target(manifest, target)
+        if not name or record_target is None:
+            continue
+        _request_json("POST", f"{api_url}/v1/workloads", _manifest_payload(manifest))
+        _request_json(
+            "POST",
+            f"{api_url}/v1/workloads/{name}/deployments",
+            {
+                "target": record_target,
+                "status": status,
+                "endpoint": _deployment_endpoint(manifest),
+                "metadata": {
+                    "service_name": _deployment_service_name(manifest),
+                    "deployment_mode": _deployment_mode(manifest),
+                    "source": "moira-cli",
+                },
+            },
+        )
+        registered += 1
+    ui.success(f"Registered {registered} deployment record(s) for {target} context")
+
+
 @workload_app.command("new")
 def workload_new(
     name: str = typer.Argument(..., help="Workload name."),
@@ -927,6 +1013,12 @@ def agent_session_history(
 @deploy_app.command("local")
 def deploy_local(
     up: bool = typer.Option(False, "--up", help="Run docker compose after generating."),
+    register: bool = typer.Option(
+        False,
+        "--register",
+        help="Register workloads and local deployment records in the API.",
+    ),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
 ) -> None:
     """Generate local Docker Compose services from workload manifests."""
     repo_root = _repo_root()
@@ -953,6 +1045,13 @@ def deploy_local(
                 cwd=repo_root,
             )
         )
+    if register:
+        _register_workload_deployments(
+            manifests,
+            target="local",
+            status="running" if up else "generated",
+            api_url=api_url,
+        )
 
 
 @deploy_app.command("k8s")
@@ -961,6 +1060,12 @@ def deploy_k8s(
         False, "--apply", help="Run helm upgrade after generating."
     ),
     env: str = typer.Option("dev", "--env"),
+    register: bool = typer.Option(
+        False,
+        "--register",
+        help="Register workloads and Kubernetes deployment records in the API.",
+    ),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
 ) -> None:
     """Generate Helm values from workload manifests."""
     repo_root = _repo_root()
@@ -991,6 +1096,13 @@ def deploy_k8s(
                 ],
                 cwd=repo_root,
             )
+        )
+    if register:
+        _register_workload_deployments(
+            manifests,
+            target="kubernetes",
+            status="applied" if apply else "generated",
+            api_url=api_url,
         )
 
 

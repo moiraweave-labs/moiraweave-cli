@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from moira_cli import main as cli_main
+
 
 @pytest.fixture
 def repo_root() -> Path:
@@ -263,3 +265,99 @@ class TestCLIDefaults:
         )
         assert result.returncode == 0
         assert "non-interactive" in result.stdout or result.returncode == 0
+
+
+class TestCLIDeployRegistration:
+    def test_register_workload_deployments_posts_manifest_and_deployment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+        manifest = {
+            "apiVersion": "moiraweave.io/v1alpha1",
+            "kind": "Workload",
+            "metadata": {"name": "hermes"},
+            "spec": {
+                "type": "agent-service",
+                "image": "ghcr.io/nousresearch/hermes-agent:latest",
+                "deployment": {
+                    "mode": "managed",
+                    "targets": ["local", "kubernetes"],
+                    "serviceName": "hermes",
+                },
+                "ports": [{"name": "http", "port": 8642}],
+                "agent": {"adapter": "hermes"},
+            },
+            "_path": "/tmp/workload.yaml",
+        }
+
+        cli_main._register_workload_deployments(
+            [manifest],
+            target="local",
+            status="running",
+            api_url="http://api:8000",
+        )
+
+        assert calls[0] == (
+            "POST",
+            "http://api:8000/v1/workloads",
+            {key: value for key, value in manifest.items() if key != "_path"},
+        )
+        assert calls[1][0] == "POST"
+        assert calls[1][1] == "http://api:8000/v1/workloads/hermes/deployments"
+        assert calls[1][2] is not None
+        assert calls[1][2]["target"] == "local"
+        assert calls[1][2]["status"] == "running"
+        assert calls[1][2]["endpoint"] == "http://hermes:8642"
+        metadata = calls[1][2]["metadata"]
+        assert isinstance(metadata, dict)
+        assert metadata["service_name"] == "hermes"
+
+    def test_register_workload_deployments_records_external_agents(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+        manifest = {
+            "apiVersion": "moiraweave.io/v1alpha1",
+            "kind": "Workload",
+            "metadata": {"name": "external-hermes"},
+            "spec": {
+                "type": "agent-service",
+                "endpoint": "https://agents.example.com/hermes",
+                "deployment": {"mode": "external"},
+                "agent": {"adapter": "hermes"},
+            },
+        }
+
+        cli_main._register_workload_deployments(
+            [manifest],
+            target="local",
+            status="running",
+            api_url="http://api:8000",
+        )
+
+        assert calls[1][1] == (
+            "http://api:8000/v1/workloads/external-hermes/deployments"
+        )
+        assert calls[1][2] is not None
+        assert calls[1][2]["target"] == "external"
+        assert calls[1][2]["endpoint"] == "https://agents.example.com/hermes"
