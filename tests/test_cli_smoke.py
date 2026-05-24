@@ -125,6 +125,8 @@ class TestCLIWorkloads:
         assert manifest["spec"]["env"]["API_SERVER_ENABLED"] == "true"
         assert manifest["spec"]["env"]["API_SERVER_HOST"] == "0.0.0.0"
         assert manifest["spec"]["env"]["API_SERVER_PORT"] == "8642"
+        assert manifest["spec"]["deployment"]["mode"] == "managed"
+        assert manifest["spec"]["deployment"]["targets"] == ["local", "kubernetes"]
         assert manifest["spec"]["agent"]["adapter"] == "hermes"
         assert manifest["spec"]["agent"]["workspaceMount"] == "/workspace"
         assert manifest["spec"]["agent"]["authTokenEnv"] == "HERMES_API_SERVER_KEY"
@@ -132,6 +134,42 @@ class TestCLIWorkloads:
         assert manifest["spec"]["agent"]["instructions"] == "Be operational."
         assert manifest["spec"]["agent"]["pollIntervalSeconds"] == 1.5
         assert "telegram" in manifest["spec"]["agent"]["exposedChannels"]
+
+    def test_workload_new_external_agent_requires_endpoint(
+        self, cli_command: list[str], initialized_workspace: Path
+    ) -> None:
+        result = subprocess.run(
+            [
+                *cli_command,
+                "workload",
+                "new",
+                "external-hermes",
+                "--type",
+                "agent-service",
+                "--deployment-mode",
+                "external",
+                "--endpoint",
+                "https://agents.example.com/hermes",
+                "--adapter",
+                "hermes",
+            ],
+            cwd=initialized_workspace,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+        manifest_path = (
+            initialized_workspace
+            / ".moiraweave"
+            / "workloads"
+            / "external-hermes"
+            / "workload.yaml"
+        )
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        assert "image" not in manifest["spec"]
+        assert manifest["spec"]["endpoint"] == "https://agents.example.com/hermes"
+        assert manifest["spec"]["deployment"]["mode"] == "external"
 
     def test_workload_list_succeeds(
         self, cli_command: list[str], initialized_workspace: Path
@@ -197,7 +235,9 @@ class TestCLIWorkloads:
             / "docker-compose.workloads.yml"
         )
         assert generated.exists()
-        assert "mock-agent" in generated.read_text(encoding="utf-8")
+        parsed = yaml.safe_load(generated.read_text(encoding="utf-8"))
+        assert "mock-agent" in parsed["services"]
+        assert parsed["services"]["mock-agent"]["networks"] == ["moiraweave-net"]
 
     def test_init_compose_includes_integrated_ui(
         self, initialized_workspace: Path

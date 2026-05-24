@@ -434,6 +434,18 @@ def _render_local_workload_compose(
         spec = manifest.get("spec", {})
         if not name or not isinstance(spec, dict):
             continue
+        deployment = spec.get("deployment") or {}
+        if isinstance(deployment, dict):
+            if deployment.get("mode", "managed") == "external":
+                continue
+            targets = deployment.get("targets") or ["local", "kubernetes"]
+            if "local" not in targets:
+                continue
+            service_name = deployment.get("serviceName") or name
+            local_network = deployment.get("localNetwork") or "moiraweave-net"
+        else:
+            service_name = name
+            local_network = "moiraweave-net"
         image = spec.get("image")
         if not image:
             continue
@@ -442,6 +454,11 @@ def _render_local_workload_compose(
             "image": image,
             "restart": "unless-stopped",
             "environment": dict(spec.get("env") or {}),
+            "labels": [
+                f"moiraweave.io/workload={name}",
+                f"moiraweave.io/workload-type={_workload_type(manifest)}",
+            ],
+            "networks": [local_network],
         }
         for secret in spec.get("secrets") or []:
             service["environment"][str(secret)] = f"${{{secret}:?set {secret}}}"
@@ -482,7 +499,7 @@ def _render_local_workload_compose(
 
         if not service["environment"]:
             service.pop("environment")
-        services[name] = service
+        services[str(service_name)] = service
 
     return {"services": services}
 
@@ -495,8 +512,20 @@ def _render_helm_values(manifests: list[dict[str, Any]]) -> dict[str, Any]:
         metadata = manifest.get("metadata", {})
         if not name or not isinstance(spec, dict):
             continue
+        deployment = spec.get("deployment") or {}
+        deployment_mode = (
+            deployment.get("mode", "managed")
+            if isinstance(deployment, dict)
+            else "managed"
+        )
+        deployment_targets = (
+            deployment.get("targets") or ["local", "kubernetes"]
+            if isinstance(deployment, dict)
+            else ["local", "kubernetes"]
+        )
         workloads[name] = {
-            "enabled": True,
+            "enabled": deployment_mode != "external"
+            and "kubernetes" in deployment_targets,
             "metadata": metadata if isinstance(metadata, dict) else {"name": name},
             **spec,
         }
@@ -512,6 +541,32 @@ def workload_new(
         help="model-service, pipeline, or agent-service.",
     ),
     image: str | None = typer.Option(None, "--image", help="Container image."),
+    endpoint: str | None = typer.Option(
+        None,
+        "--endpoint",
+        help="Runtime base URL. Required for external workloads.",
+    ),
+    deployment_mode: str = typer.Option(
+        "managed",
+        "--deployment-mode",
+        help="managed or external.",
+    ),
+    deployment_target: list[str] = typer.Option(
+        [],
+        "--deployment-target",
+        help="Deployment target for managed workloads: local or kubernetes.",
+    ),
+    service_name: str | None = typer.Option(
+        None,
+        "--service-name",
+        help="Stable service DNS name used by worker/API to reach the workload.",
+    ),
+    replicas: int = typer.Option(
+        1,
+        "--replicas",
+        min=0,
+        help="Managed Kubernetes replica count.",
+    ),
     mode: str = typer.Option("session", "--mode", help="sync, async, or session."),
     timeout_seconds: int = typer.Option(3600, "--timeout-seconds", min=1),
     port: list[int] = typer.Option([], "--port", help="Expose TCP port."),
@@ -579,12 +634,22 @@ def workload_new(
         )
     if mode not in {"sync", "async", "session"}:
         _exit_with_error("Invalid execution mode. Use sync, async, or session.")
+    if deployment_mode not in {"managed", "external"}:
+        _exit_with_error("Invalid deployment mode. Use managed or external.")
+    deployment_targets = deployment_target or ["local", "kubernetes"]
+    invalid_targets = [
+        target for target in deployment_targets if target not in {"local", "kubernetes"}
+    ]
+    if invalid_targets:
+        _exit_with_error("Invalid deployment target. Use local or kubernetes.")
     if adapter not in {"generic-http", "hermes", "openclaw"}:
         _exit_with_error("Invalid adapter. Use generic-http, hermes, or openclaw.")
-    if workload_type != "pipeline" and not image:
+    if workload_type != "pipeline" and deployment_mode == "managed" and not image:
         _exit_with_error(
-            "--image is required for model-service and agent-service workloads"
+            "--image is required for managed model-service and agent-service workloads"
         )
+    if workload_type != "pipeline" and deployment_mode == "external" and not endpoint:
+        _exit_with_error("--endpoint is required for external workloads")
     env_values = _parse_key_value_options(env_var, option="--env")
 
     repo_root = _repo_root()
@@ -600,6 +665,13 @@ def workload_new(
         "metadata": {"name": name},
         "spec": {
             "type": workload_type,
+            "deployment": {
+                "mode": deployment_mode,
+                "targets": deployment_targets,
+                "serviceName": service_name,
+                "replicas": replicas,
+                "localNetwork": "moiraweave-net",
+            },
             "execution": {"mode": mode, "timeoutSeconds": timeout_seconds},
             "ports": [
                 {"name": "http" if index == 0 else f"port-{value}", "port": value}
@@ -615,6 +687,8 @@ def workload_new(
     }
     if image:
         manifest["spec"]["image"] = image
+    if endpoint:
+        manifest["spec"]["endpoint"] = endpoint
     if workload_type == "agent-service":
         manifest["spec"]["agent"] = {
             "adapter": adapter,

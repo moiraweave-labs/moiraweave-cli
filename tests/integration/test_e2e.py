@@ -151,6 +151,7 @@ class TestDeployGeneration:
         )
         parsed = yaml.safe_load(generated.read_text())
         assert "mock-agent" in parsed["services"]
+        assert parsed["services"]["mock-agent"]["networks"] == ["moiraweave-net"]
 
     def test_deploy_k8s_generates_values(self, workspace: Path) -> None:
         _run(
@@ -169,3 +170,4 @@ class TestDeployGeneration:
         generated = workspace / ".moiraweave" / "deploy" / "values-workloads-dev.yaml"
         parsed = yaml.safe_load(generated.read_text())
         assert parsed["workloads"]["mock-model"]["type"] == "model-service"
+        assert parsed["workloads"]["mock-model"]["deployment"]["mode"] == "managed"

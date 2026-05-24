@@ -22,6 +22,10 @@ moira init
 moira workload new hermes \
   --type agent-service \
   --image ghcr.io/nousresearch/hermes-agent:latest \
+  --deployment-mode managed \
+  --deployment-target local \
+  --deployment-target kubernetes \
+  --service-name hermes \
   --mode session \
   --timeout-seconds 172800 \
   --adapter hermes \
@@ -41,6 +45,9 @@ moira agent channel-message hermes telegram user-123 "hello"
 
 `moira init` writes a local `docker-compose.yml` with the Ops dashboard enabled
 by default at `http://localhost:3000`.
+
+Use `--deployment-mode external --endpoint <url>` for an agent runtime that is
+already deployed outside MoiraWeave.
 
 ## Command Surface
 
