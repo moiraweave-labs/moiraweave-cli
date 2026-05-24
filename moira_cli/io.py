@@ -154,7 +154,7 @@ build/
         if not values_file.exists():
             values_file.write_text(
                 f"# Deployment values for {env} environment\n"
-                f"# Override or extend defaults from moiraweave-core\n"
+                f"# Override or extend defaults from moiraweave\n"
                 f"environment: {env}\n",
                 encoding="utf-8",
             )

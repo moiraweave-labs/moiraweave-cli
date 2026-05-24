@@ -17,15 +17,14 @@ moira --help
 ## Quickstart
 
 ```bash
-moira init
-moira demo agent
 moira up
 ```
 
-`moira init` writes a local `docker-compose.yml` with the Ops dashboard enabled
-by default at `http://localhost:3000`. `moira up` generates workload Compose
-services, starts API, worker, storage, UI, and workloads, waits for readiness,
-and registers local deployment records.
+`moira up` initializes the workspace if needed, creates a no-secret demo agent
+when there are no workloads, writes a local `docker-compose.yml` with the Ops
+dashboard enabled, generates workload Compose services, starts API, worker,
+storage, UI, and workloads, waits for readiness, and registers local deployment
+records. The dashboard is available at `http://localhost:3000`.
 
 Use `--deployment-mode external --endpoint <url>` for an agent runtime that is
 already deployed outside MoiraWeave.
@@ -67,6 +66,6 @@ uv run pytest
 
 ## Related Repositories
 
-- [moiraweave-core](https://github.com/moiraweave-labs/moiraweave-core): runtime services and infrastructure
+- [moiraweave](https://github.com/moiraweave-labs/moiraweave): runtime services and infrastructure
 - [moiraweave-ui](https://github.com/moiraweave-labs/moiraweave-ui): integrated Ops dashboard
 - [moiraweave-docs](https://github.com/moiraweave-labs/moiraweave-docs): documentation site

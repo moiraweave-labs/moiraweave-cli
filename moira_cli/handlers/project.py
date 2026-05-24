@@ -66,7 +66,7 @@ services:
       - qdrant_data:/qdrant/storage
 
   worker:
-    image: ghcr.io/moiraweave-labs/moiraweave-core/worker:latest
+    image: ghcr.io/moiraweave-labs/moiraweave/worker:latest
     depends_on:
       redis:
         condition: service_healthy
@@ -86,7 +86,7 @@ services:
       - ./.moiraweave/artifacts:/workspace/artifacts
 
   api-gateway:
-    image: ghcr.io/moiraweave-labs/moiraweave-core/api-gateway:latest
+    image: ghcr.io/moiraweave-labs/moiraweave/api-gateway:latest
     depends_on:
       redis:
         condition: service_healthy
