@@ -18,33 +18,14 @@ moira --help
 
 ```bash
 moira init
-
-moira workload new hermes \
-  --type agent-service \
-  --image ghcr.io/nousresearch/hermes-agent:latest \
-  --deployment-mode managed \
-  --deployment-target local \
-  --deployment-target kubernetes \
-  --service-name hermes \
-  --mode session \
-  --timeout-seconds 172800 \
-  --adapter hermes \
-  --port 8000 \
-  --secret OPENAI_API_KEY \
-  --persistence \
-  --mount-path /data \
-  --workspace-mount /workspace
-
-moira deploy local
-docker compose -f docker-compose.yml -f .moiraweave/deploy/docker-compose.workloads.yml up -d
-moira workload deploy hermes
-moira workload status hermes
-moira agent session create hermes
-moira agent channel-message hermes telegram user-123 "hello"
+moira demo agent
+moira up
 ```
 
 `moira init` writes a local `docker-compose.yml` with the Ops dashboard enabled
-by default at `http://localhost:3000`.
+by default at `http://localhost:3000`. `moira up` generates workload Compose
+services, starts API, worker, storage, UI, and workloads, waits for readiness,
+and registers local deployment records.
 
 Use `--deployment-mode external --endpoint <url>` for an agent runtime that is
 already deployed outside MoiraWeave.
@@ -52,6 +33,8 @@ already deployed outside MoiraWeave.
 ## Command Surface
 
 - `moira init`: create a MoiraWeave workspace.
+- `moira up`: initialize if needed, start the local stack, and register workloads.
+- `moira demo agent`: create a no-secret mock agent workload.
 - `moira workload new|list|show|deploy|status|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
 - `moira agent session create|message|history`: interact with agent sessions.

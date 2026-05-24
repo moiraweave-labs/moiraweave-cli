@@ -56,6 +56,8 @@ class TestCLISmokeBasic:
         assert "workload" in result.stdout
         assert "run" in result.stdout
         assert "agent" in result.stdout
+        assert "demo" in result.stdout
+        assert "up" in result.stdout
 
     def test_init_help(self, cli_command: list[str], repo_root: Path) -> None:
         result = subprocess.run(
@@ -69,6 +71,30 @@ class TestCLISmokeBasic:
 
 
 class TestCLIWorkloads:
+    def test_demo_agent_creates_runnable_manifest(
+        self, cli_command: list[str], initialized_workspace: Path
+    ) -> None:
+        result = subprocess.run(
+            [*cli_command, "demo", "agent"],
+            cwd=initialized_workspace,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+        manifest_path = (
+            initialized_workspace
+            / ".moiraweave"
+            / "workloads"
+            / "demo-agent"
+            / "workload.yaml"
+        )
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["spec"]["image"] == "python:3.13-slim"
+        assert manifest["spec"]["agent"]["messagePath"] == "/message"
+        assert manifest["spec"]["command"] == ["python", "-u", "-c"]
+        assert "OPENAI_API_KEY" not in manifest["spec"].get("secrets", [])
+
     def test_workload_new_creates_manifest(
         self, cli_command: list[str], initialized_workspace: Path
     ) -> None:
@@ -240,6 +266,7 @@ class TestCLIWorkloads:
         parsed = yaml.safe_load(generated.read_text(encoding="utf-8"))
         assert "mock-agent" in parsed["services"]
         assert parsed["services"]["mock-agent"]["networks"] == ["moiraweave-net"]
+        assert parsed["networks"]["moiraweave-net"]["name"] == "moiraweave-net"
 
     def test_init_compose_includes_integrated_ui(
         self, initialized_workspace: Path
@@ -251,6 +278,8 @@ class TestCLIWorkloads:
         assert ui["image"] == "ghcr.io/moiraweave-labs/moiraweave-ui:latest"
         assert "profiles" not in ui
         assert ui["ports"] == ["${MOIRAWEAVE_UI_PORT:-3000}:80"]
+        assert ui["networks"] == ["moiraweave-net"]
+        assert compose["networks"]["moiraweave-net"]["name"] == "moiraweave-net"
 
 
 class TestCLIDefaults:
@@ -268,6 +297,55 @@ class TestCLIDefaults:
 
 
 class TestCLIDeployRegistration:
+    def test_up_initializes_generates_starts_and_registers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        commands: list[list[str]] = []
+        registered: list[dict[str, object]] = []
+
+        def fake_run(command: list[str], cwd: Path | None = None) -> str:
+            del cwd
+            commands.append(command)
+            return "started"
+
+        def fake_register(
+            manifests: list[dict[str, object]],
+            *,
+            target: str,
+            status: str,
+            api_url: str,
+        ) -> None:
+            assert target == "local"
+            assert status == "running"
+            assert api_url == "http://api:8000"
+            registered.extend(manifests)
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli_main, "_run_command", fake_run)
+        monkeypatch.setattr(cli_main, "_wait_for_api_ready", lambda *_args: True)
+        monkeypatch.setattr(cli_main, "_dev_login_token", lambda _api_url: "token")
+        monkeypatch.setattr(cli_main, "_register_workload_deployments", fake_register)
+
+        cli_main.up(
+            api_url="http://api:8000",
+            wait_timeout=1,
+            demo_agent=True,
+            register=True,
+        )
+
+        assert (tmp_path / "moiraweave.yaml").exists()
+        assert (
+            tmp_path / ".moiraweave" / "deploy" / "docker-compose.workloads.yml"
+        ).exists()
+        assert commands[0][:5] == [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "-f",
+        ]
+        assert registered[0]["metadata"]["name"] == "demo-agent"
+
     def test_register_workload_deployments_posts_manifest_and_deployment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -28,6 +28,8 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    networks:
+      - moiraweave-net
     volumes:
       - redis_data:/data
     healthcheck:
@@ -44,6 +46,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-moiraweave-dev}
     ports:
       - "5432:5432"
+    networks:
+      - moiraweave-net
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -56,6 +60,8 @@ services:
     image: qdrant/qdrant:v1.9.2
     ports:
       - "6333:6333"
+    networks:
+      - moiraweave-net
     volumes:
       - qdrant_data:/qdrant/storage
 
@@ -73,6 +79,8 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-moiraweave}:${POSTGRES_PASSWORD:-moiraweave-dev}@postgres:5432/${POSTGRES_DB:-moiraweave}
       WORKLOADS_DIR: /workspace/workloads
       ARTIFACTS_DIR: /workspace/artifacts
+    networks:
+      - moiraweave-net
     volumes:
       - ./.moiraweave/workloads:/workspace/workloads:ro
       - ./.moiraweave/artifacts:/workspace/artifacts
@@ -93,6 +101,8 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-moiraweave}:${POSTGRES_PASSWORD:-moiraweave-dev}@postgres:5432/${POSTGRES_DB:-moiraweave}
       WORKLOADS_DIR: /workspace/workloads
       ARTIFACTS_DIR: /workspace/artifacts
+    networks:
+      - moiraweave-net
     volumes:
       - ./.moiraweave/workloads:/workspace/workloads:ro
       - ./.moiraweave/artifacts:/workspace/artifacts
@@ -106,11 +116,17 @@ services:
       - "${MOIRAWEAVE_UI_PORT:-3000}:80"
     environment:
       API_PROXY_PASS: http://api-gateway:8000
+    networks:
+      - moiraweave-net
 
 volumes:
   redis_data:
   qdrant_data:
   postgres_data:
+
+networks:
+  moiraweave-net:
+    name: moiraweave-net
 """
 
 

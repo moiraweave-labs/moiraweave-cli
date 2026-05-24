@@ -43,6 +43,7 @@ run_app = typer.Typer(help="Submit, watch, and cancel runs")
 agent_app = typer.Typer(help="Manage agent sessions")
 agent_session_app = typer.Typer(help="Create and message agent sessions")
 deploy_app = typer.Typer(help="Generate or apply deployment assets")
+demo_app = typer.Typer(help="Create runnable demo workloads")
 task_app = typer.Typer(help="Manage tasks")
 step_app = typer.Typer(help="Manage steps")
 
@@ -61,6 +62,7 @@ app.add_typer(workload_app, name="workload")
 app.add_typer(run_app, name="run")
 app.add_typer(agent_app, name="agent")
 app.add_typer(deploy_app, name="deploy")
+app.add_typer(demo_app, name="demo")
 agent_app.add_typer(agent_session_app, name="session")
 
 
@@ -400,6 +402,91 @@ def _write_manifest(path: pathlib.Path, manifest: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
+_DEMO_AGENT_SCRIPT = r"""
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, payload, status=200):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path.startswith("/health"):
+            self._send({"status": "healthy", "ok": True})
+            return
+        if self.path.startswith("/artifacts"):
+            self._send({"artifacts": []})
+            return
+        self._send({"error": "not found"}, status=404)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length else b"{}"
+        payload = json.loads(raw.decode("utf-8") or "{}")
+        text = payload.get("message") or payload.get("prompt") or "hello"
+        self._send(
+            {
+                "accepted": True,
+                "status": "succeeded",
+                "response": f"Demo agent received: {text}",
+                "artifacts": [
+                    {
+                        "id": f"{payload.get('session_id', 'demo')}-reply",
+                        "name": "demo-reply.json",
+                        "uri": "memory://demo-reply.json",
+                        "content_type": "application/json",
+                        "metadata": {"source": "demo-agent"},
+                    }
+                ],
+            }
+        )
+
+
+HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
+""".strip()
+
+
+def _demo_agent_manifest(name: str) -> dict[str, Any]:
+    return {
+        "apiVersion": "moiraweave.io/v1alpha1",
+        "kind": "Workload",
+        "metadata": {
+            "name": name,
+            "labels": {"moiraweave.io/template": "demo-agent"},
+        },
+        "spec": {
+            "type": "agent-service",
+            "image": "python:3.13-slim",
+            "deployment": {
+                "mode": "managed",
+                "targets": ["local", "kubernetes"],
+                "serviceName": name,
+                "localNetwork": "moiraweave-net",
+            },
+            "execution": {"mode": "session", "timeoutSeconds": 3600},
+            "ports": [{"name": "http", "port": 8000}],
+            "agent": {
+                "adapter": "generic-http",
+                "messagePath": "/message",
+                "statusPath": "/health",
+                "artifactsPath": "/artifacts",
+                "exposedChannels": ["ui", "api", "webhook"],
+                "capabilities": ["demo", "chat"],
+                "dispatchTimeoutSeconds": 5,
+                "pollIntervalSeconds": 1,
+            },
+            "command": ["python", "-u", "-c"],
+            "args": [_DEMO_AGENT_SCRIPT],
+        },
+    }
+
+
 def _watch_run(run_id: str, api_url: str, timeout: int) -> None:
     with Progress(
         SpinnerColumn(style="cyan"),
@@ -428,6 +515,7 @@ def _render_local_workload_compose(
     repo_root: pathlib.Path,
 ) -> dict[str, Any]:
     services: dict[str, Any] = {}
+    networks: set[str] = set()
     artifacts_root = _artifacts_root(repo_root)
     for manifest in manifests:
         name = _workload_name(manifest)
@@ -460,6 +548,7 @@ def _render_local_workload_compose(
             ],
             "networks": [local_network],
         }
+        networks.add(str(local_network))
         for secret in spec.get("secrets") or []:
             service["environment"][str(secret)] = f"${{{secret}:?set {secret}}}"
         agent = spec.get("agent") or {}
@@ -501,7 +590,12 @@ def _render_local_workload_compose(
             service.pop("environment")
         services[str(service_name)] = service
 
-    return {"services": services}
+    compose: dict[str, Any] = {"services": services}
+    if networks:
+        compose["networks"] = {
+            network: {"name": network} for network in sorted(networks)
+        }
+    return compose
 
 
 def _render_helm_values(manifests: list[dict[str, Any]]) -> dict[str, Any]:
@@ -616,6 +710,63 @@ def _register_workload_deployments(
         )
         registered += 1
     ui.success(f"Registered {registered} deployment record(s) for {target} context")
+
+
+def _wait_for_api_ready(api_url: str, timeout_seconds: int) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                response = client.get(f"{api_url.rstrip('/')}/ready")
+            if response.status_code < 500:
+                return True
+        except httpx.HTTPError:
+            time.sleep(1)
+            continue
+        time.sleep(1)
+    return False
+
+
+def _dev_login_token(api_url: str) -> str | None:
+    username = os.environ.get("DEMO_USERNAME", "admin")
+    password = os.environ.get("DEMO_PASSWORD", "demo-password")
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            response = client.post(
+                f"{api_url.rstrip('/')}/auth/token",
+                json={"username": username, "password": password},
+            )
+            response.raise_for_status()
+            body = response.json()
+    except httpx.HTTPError:
+        return None
+    token = body.get("access_token") if isinstance(body, dict) else None
+    return str(token) if token else None
+
+
+def _ensure_demo_agent(repo_root: pathlib.Path, *, force: bool = False) -> pathlib.Path:
+    target = _workload_file(repo_root, "demo-agent")
+    if target.exists() and not force:
+        return target
+    _write_manifest(target, _demo_agent_manifest("demo-agent"))
+    return target
+
+
+@demo_app.command("agent")
+def demo_agent(
+    name: str = typer.Option("demo-agent", "--name", help="Demo workload name."),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing manifest."),
+) -> None:
+    """Create a runnable mock agent workload without external secrets."""
+    repo_root = _repo_root()
+    target = _workload_file(repo_root, name)
+    if target.exists() and not force:
+        _exit_with_error(
+            f"Demo agent already exists: {name}",
+            hint="Use --force to overwrite it.",
+        )
+    _write_manifest(target, _demo_agent_manifest(name))
+    ui.success(f"Created demo agent workload: {target.relative_to(repo_root)}")
 
 
 @workload_app.command("new")
@@ -1210,6 +1361,108 @@ def _semver_key(version: str) -> tuple[int, int, int]:
     if len(parts) != 3 or not all(part.isdigit() for part in parts):
         return (0, 0, 0)
     return tuple(int(part) for part in parts)  # type: ignore[return-value]
+
+
+@app.command()
+def up(
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    wait_timeout: int = typer.Option(
+        90,
+        "--wait-timeout",
+        min=1,
+        help="Seconds to wait for the API gateway.",
+    ),
+    demo_agent: bool = typer.Option(
+        True,
+        "--demo-agent/--no-demo-agent",
+        help="Create a demo agent if the workspace has no workloads.",
+    ),
+    register: bool = typer.Option(
+        True,
+        "--register/--no-register",
+        help="Register workloads and deployment records after startup.",
+    ),
+) -> None:
+    """Initialize, start, and register a local MoiraWeave stack."""
+    try:
+        repo_root = find_repo_root()
+    except FileNotFoundError:
+        ProjectInitCommand(repo_root=pathlib.Path.cwd()).execute(
+            action="init",
+            non_interactive=True,
+            project_name=None,
+            registry=None,
+        )
+        repo_root = pathlib.Path.cwd().resolve()
+
+    manifests = _load_workload_manifests(repo_root)
+    if not manifests and demo_agent:
+        demo_path = _ensure_demo_agent(repo_root)
+        ui.success(f"Created demo agent workload: {demo_path.relative_to(repo_root)}")
+        manifests = _load_workload_manifests(repo_root)
+
+    deploy_root = _deploy_root(repo_root)
+    deploy_root.mkdir(parents=True, exist_ok=True)
+    output = deploy_root / "docker-compose.workloads.yml"
+    output.write_text(
+        yaml.safe_dump(
+            _render_local_workload_compose(manifests, repo_root),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    ui.success(f"Generated {output.relative_to(repo_root)}")
+
+    ui.info("Starting local platform, UI, and workload services...")
+    compose_output = _run_command(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "-f",
+            str(output),
+            "up",
+            "-d",
+        ],
+        cwd=repo_root,
+    )
+    if compose_output:
+        ui.info(compose_output)
+
+    if not _wait_for_api_ready(api_url, wait_timeout):
+        _exit_with_error(
+            f"API gateway did not become ready within {wait_timeout}s",
+            hint="Run `docker compose logs api-gateway worker`.",
+        )
+
+    if register:
+        previous_token = os.environ.get("MOIRA_TOKEN")
+        token = previous_token or _dev_login_token(api_url)
+        if token:
+            os.environ["MOIRA_TOKEN"] = token
+            _register_workload_deployments(
+                manifests,
+                target="local",
+                status="running",
+                api_url=api_url,
+            )
+            if previous_token is None:
+                os.environ.pop("MOIRA_TOKEN", None)
+        else:
+            ui.warning(
+                "Stack is running, but automatic registration could not log in. "
+                "Set MOIRA_TOKEN or run `moira deploy local --register`."
+            )
+
+    ui.next_steps(
+        "MoiraWeave is up",
+        [
+            (1, "open http://localhost:3000", "Open the Ops dashboard"),
+            (2, "sign in as admin / demo-password", "Use local dev credentials"),
+            (3, "Agents -> New Session", "Chat with the demo agent"),
+        ],
+    )
 
 
 @app.command()

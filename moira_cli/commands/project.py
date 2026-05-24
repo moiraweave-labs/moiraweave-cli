@@ -69,14 +69,10 @@ class ProjectInitCommand(BaseCommand):
         self.ui.next_steps(
             "Next steps",
             [
-                (
-                    1,
-                    "moira workload new hermes --type agent-service --image ghcr.io/nousresearch/hermes-agent:latest",
-                    "Create an agent workload",
-                ),
-                (2, "moira deploy local", "Generate local workload compose"),
-                (3, "docker compose up -d", "Start API, worker, storage, and UI"),
-                (4, "open http://localhost:3000", "Open the Ops dashboard"),
+                (1, "moira demo agent", "Create a no-secret local agent"),
+                (2, "moira up", "Start API, worker, UI, storage, and workloads"),
+                (3, "open http://localhost:3000", "Open the Ops dashboard"),
+                (4, "sign in as admin / demo-password", "Use local dev credentials"),
             ],
         )
 
