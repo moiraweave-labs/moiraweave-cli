@@ -32,34 +32,3 @@ class BaseHandler:
         if self._config is None:
             self._config = load_moiraweave_config(self.repo_root)
         return self._config
-
-    @property
-    def tasks_dir(self) -> Path:
-        """Get tasks directory path.
-
-        :returns: Absolute path to tasks directory.
-        """
-        return self.repo_root / self.config.tasks_dir
-
-    @property
-    def steps_dir(self) -> Path:
-        """Get steps directory path.
-
-        :returns: Absolute path to steps directory.
-        """
-        return self.repo_root / self.config.steps_dir
-
-    @property
-    def pipelines_dir(self) -> Path:
-        """Get pipelines directory path.
-
-        :returns: Absolute path to pipelines directory.
-        """
-        return self.repo_root / self.config.pipelines_dir
-
-    def _get_dirs(self) -> tuple[Path, Path, Path]:
-        """Return ``(tasks_dir, steps_dir, pipelines_dir)`` as a convenience tuple.
-
-        :returns: Tuple of absolute paths for tasks, steps, and pipelines directories.
-        """
-        return self.tasks_dir, self.steps_dir, self.pipelines_dir

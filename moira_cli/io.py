@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import secrets
 import shutil
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,35 +14,6 @@ from dotenv import dotenv_values
 from pydantic import ValidationError
 
 from moira_cli.models import MoiraWeaveConfig
-
-
-@dataclass(frozen=True)
-class TaskInfo:
-    """Task metadata loaded from tasks/<task>/schema.json."""
-
-    name: str
-    description: str
-    path: Path
-
-
-@dataclass(frozen=True)
-class StepInfo:
-    """Step metadata loaded from steps/<step>/step.yaml."""
-
-    name: str
-    task: str
-    version: str
-    path: Path
-
-
-@dataclass(frozen=True)
-class PipelineInfo:
-    """Pipeline metadata loaded from pipelines/<pipeline>/pipeline.yaml."""
-
-    name: str
-    description: str
-    steps: list[dict[str, str]]
-    path: Path
 
 
 def load_moiraweave_config(repo_root: Path) -> MoiraWeaveConfig:
@@ -187,74 +156,6 @@ def read_env(repo_root: Path) -> dict[str, str]:
     """
     values = dotenv_values(repo_root / ".env")
     return {k: v for k, v in values.items() if v is not None}
-
-
-def discover_tasks(repo_root: Path, tasks_dir: str = "tasks") -> list[TaskInfo]:
-    """Discover all task schema files.
-
-    :param repo_root: Repository root path.
-    :param tasks_dir: Relative tasks directory.
-    :returns: Sorted task metadata.
-    """
-    root = repo_root / tasks_dir
-    results: list[TaskInfo] = []
-    for schema in sorted(root.glob("*/schema.json")):
-        raw = json.loads(schema.read_text(encoding="utf-8"))
-        results.append(
-            TaskInfo(
-                name=str(raw.get("task", schema.parent.name)),
-                description=str(raw.get("description", "")),
-                path=schema,
-            )
-        )
-    return results
-
-
-def discover_steps(repo_root: Path, steps_dir: str = "steps") -> list[StepInfo]:
-    """Discover all step.yaml files.
-
-    :param repo_root: Repository root path.
-    :param steps_dir: Relative steps directory.
-    :returns: Sorted step metadata.
-    """
-    root = repo_root / steps_dir
-    results: list[StepInfo] = []
-    for step_yaml in sorted(root.glob("*/step.yaml")):
-        raw = yaml.safe_load(step_yaml.read_text(encoding="utf-8"))
-        results.append(
-            StepInfo(
-                name=str(raw.get("name", step_yaml.parent.name)),
-                task=str(raw.get("task", "")),
-                version=str(raw.get("version", "")),
-                path=step_yaml,
-            )
-        )
-    return results
-
-
-def discover_pipelines(
-    repo_root: Path,
-    pipelines_dir: str = "pipelines",
-) -> list[PipelineInfo]:
-    """Discover all pipeline definition files.
-
-    :param repo_root: Repository root path.
-    :param pipelines_dir: Relative pipelines directory.
-    :returns: Sorted pipeline metadata.
-    """
-    root = repo_root / pipelines_dir
-    results: list[PipelineInfo] = []
-    for pipeline_yaml in sorted(root.glob("*/pipeline.yaml")):
-        raw = yaml.safe_load(pipeline_yaml.read_text(encoding="utf-8"))
-        results.append(
-            PipelineInfo(
-                name=str(raw.get("name", pipeline_yaml.parent.name)),
-                description=str(raw.get("description", "")),
-                steps=list(raw.get("steps", [])),
-                path=pipeline_yaml,
-            )
-        )
-    return results
 
 
 def check_prereqs() -> dict[str, bool]:

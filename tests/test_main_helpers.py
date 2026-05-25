@@ -16,34 +16,10 @@ if SPEC is None or SPEC.loader is None:  # pragma: no cover
 MAIN_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MAIN_MODULE)
 
-_bump_semver = MAIN_MODULE._bump_semver
 _agent_template_manifest = MAIN_MODULE._agent_template_manifest
-_catalog_raw_url_from_uri = MAIN_MODULE._catalog_raw_url_from_uri
 _missing_required_env = MAIN_MODULE._missing_required_env
 _parse_json_input = MAIN_MODULE._parse_json_input
 _render_local_workload_compose = MAIN_MODULE._render_local_workload_compose
-_semver_key = MAIN_MODULE._semver_key
-
-
-def test_bump_semver_patch() -> None:
-    """It bumps patch versions correctly."""
-    assert _bump_semver("1.2.3", "patch") == "1.2.4"
-
-
-def test_bump_semver_minor() -> None:
-    """It bumps minor versions and resets patch."""
-    assert _bump_semver("1.2.3", "minor") == "1.3.0"
-
-
-def test_bump_semver_major() -> None:
-    """It bumps major versions and resets minor and patch."""
-    assert _bump_semver("1.2.3", "major") == "2.0.0"
-
-
-def test_bump_semver_invalid_raises_exit() -> None:
-    """Invalid semantic versions terminate with a Typer exit."""
-    with pytest.raises(typer.Exit):
-        _bump_semver("1.2", "patch")
 
 
 def test_parse_json_input_inline_object() -> None:
@@ -82,25 +58,6 @@ def test_parse_json_input_file_missing_raises_exit(tmp_path: Path) -> None:
     source = tmp_path / "missing.json"
     with pytest.raises(typer.Exit):
         _parse_json_input(f"@{source}")
-
-
-def test_semver_key_valid_and_invalid() -> None:
-    """Version keys are sortable and invalid values degrade to zeros."""
-    assert _semver_key("2.4.6") == (2, 4, 6)
-    assert _semver_key("x.y.z") == (0, 0, 0)
-
-
-def test_catalog_raw_url_passthrough_for_http_yaml() -> None:
-    """Direct HTTP catalog files are returned unchanged."""
-    uri = "https://example.com/catalog.yaml"
-    assert _catalog_raw_url_from_uri(uri) == uri
-
-
-def test_catalog_raw_url_for_github_repo() -> None:
-    """GitHub repository URLs are converted to raw catalog URLs."""
-    uri = "https://github.com/example/catalog"
-    expected = "https://raw.githubusercontent.com/example/catalog/main/catalog.yaml"
-    assert _catalog_raw_url_from_uri(uri) == expected
 
 
 def test_agent_template_manifest_for_hermes() -> None:

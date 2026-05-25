@@ -26,21 +26,6 @@ class EnvironmentConfig(BaseModel):
     argocd_app: str | None = None
 
 
-class CatalogSourceConfig(BaseModel):
-    """Optional legacy step catalog source.
-
-    :param name: Catalog name.
-    :param uri: Git or registry URI for the catalog.
-    :param version_constraint: Optional semver constraint (e.g., "^1.0.0").
-    :param enabled: Whether this catalog is enabled for step discovery.
-    """
-
-    name: str
-    uri: str = ""
-    version_constraint: str = "*"
-    enabled: bool = True
-
-
 class MoiraWeaveConfig(BaseModel):
     """Root moiraweave.yaml model.
 
@@ -49,18 +34,13 @@ class MoiraWeaveConfig(BaseModel):
     :param environments: Named environment configurations.
     :param workloads_dir: Directory containing workload manifests.
     :param artifacts_dir: Directory containing local artifacts.
-    :param catalogs: Optional legacy step catalogs.
     :param runtime_version: Pinned runtime version for compatibility checks.
     """
 
     name: str
     registry: str
     environments: dict[str, EnvironmentConfig] = Field(default_factory=dict)
-    catalogs: dict[str, CatalogSourceConfig] = Field(default_factory=dict)
     workloads_dir: str = ".moiraweave/workloads"
     artifacts_dir: str = ".moiraweave/artifacts"
     deploy_dir: str = ".moiraweave/deploy"
-    pipelines_dir: str = ".moiraweave/pipelines"
-    steps_dir: str = ".moiraweave/steps"
-    tasks_dir: str = ".moiraweave/tasks"
     runtime_version: str = "0.1.0"
