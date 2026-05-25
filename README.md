@@ -47,7 +47,7 @@ for a no-secret first run.
 - `moira workload new|list|show|deploy|status|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
 - `moira agent session create|message|history`: interact with agent sessions.
-- `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress.
+- `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.
 - `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
 
 ## Workspace Model
