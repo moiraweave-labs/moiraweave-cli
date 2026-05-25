@@ -120,7 +120,7 @@ class TestCLIWorkloads:
                 "OPENAI_API_KEY",
                 "--adapter",
                 "hermes",
-                "--channel",
+                "--external-channel",
                 "telegram",
                 "--workspace-mount",
                 "/workspace",
@@ -161,7 +161,8 @@ class TestCLIWorkloads:
         assert manifest["spec"]["agent"]["model"] == "hermes-agent"
         assert manifest["spec"]["agent"]["instructions"] == "Be operational."
         assert manifest["spec"]["agent"]["pollIntervalSeconds"] == 1.5
-        assert "telegram" in manifest["spec"]["agent"]["exposedChannels"]
+        assert manifest["spec"]["agent"]["exposedChannels"] == ["ui", "api"]
+        assert manifest["spec"]["agent"]["externalOwnedChannels"] == ["telegram"]
 
     def test_workload_new_external_agent_requires_endpoint(
         self, cli_command: list[str], initialized_workspace: Path

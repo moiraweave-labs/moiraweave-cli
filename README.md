@@ -50,6 +50,10 @@ for a no-secret first run.
 - `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.
 - `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
 
+Use `--channel` for channels MoiraWeave owns through its API gateway. Use
+`--external-channel telegram` when the agent runtime owns Telegram directly and
+MoiraWeave should only supervise the workload.
+
 ## Workspace Model
 
 ```text

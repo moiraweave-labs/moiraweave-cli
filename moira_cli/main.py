@@ -891,7 +891,12 @@ def workload_new(
     channel: list[str] = typer.Option(
         ["ui", "api"],
         "--channel",
-        help="Exposed agent interaction channel.",
+        help="MoiraWeave-owned agent interaction channel.",
+    ),
+    external_channel: list[str] = typer.Option(
+        [],
+        "--external-channel",
+        help="Runtime-owned channel, such as telegram or slack.",
     ),
     workspace_mount: str | None = typer.Option(
         None,
@@ -1001,6 +1006,7 @@ def workload_new(
             "adapter": adapter,
             "requiredSecrets": list(secret),
             "exposedChannels": list(dict.fromkeys(channel)),
+            "externalOwnedChannels": list(dict.fromkeys(external_channel)),
             "workspaceMount": workspace_mount,
             "authTokenEnv": auth_token_env,
             "agentId": agent_id,
