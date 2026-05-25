@@ -1179,7 +1179,9 @@ def secrets_list(
     """List required secret names and whether they are configured locally."""
     repo_root = _repo_root()
     manifests = _load_workload_manifests(repo_root)
-    if workload and workload not in {_workload_name(manifest) for manifest in manifests}:
+    if workload and workload not in {
+        _workload_name(manifest) for manifest in manifests
+    }:
         _exit_with_error(f"Unknown workload: {workload}")
     inventory = _secret_inventory(manifests, repo_root, workload=workload)
     console.print(Syntax(json.dumps(inventory, indent=2), "json"))
