@@ -96,7 +96,5 @@ def test_catalog_raw_url_passthrough_for_http_yaml() -> None:
 def test_catalog_raw_url_for_github_repo() -> None:
     """GitHub repository URLs are converted to raw catalog URLs."""
     uri = "https://github.com/example/catalog"
-    expected = (
-        "https://raw.githubusercontent.com/example/catalog/main/catalog.yaml"
-    )
+    expected = "https://raw.githubusercontent.com/example/catalog/main/catalog.yaml"
     assert _catalog_raw_url_from_uri(uri) == expected
