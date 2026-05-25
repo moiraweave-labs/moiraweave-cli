@@ -39,6 +39,7 @@ agent_app = typer.Typer(help="Manage agent sessions")
 agent_session_app = typer.Typer(help="Create and message agent sessions")
 deploy_app = typer.Typer(help="Generate or apply deployment assets")
 demo_app = typer.Typer(help="Create runnable demo workloads")
+secrets_app = typer.Typer(help="Inspect required workload secrets")
 
 
 # Register 'flow' command
@@ -52,6 +53,7 @@ app.add_typer(run_app, name="run")
 app.add_typer(agent_app, name="agent")
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(demo_app, name="demo")
+app.add_typer(secrets_app, name="secrets")
 agent_app.add_typer(agent_session_app, name="session")
 
 
@@ -500,25 +502,79 @@ def _dotenv_keys(repo_root: pathlib.Path) -> set[str]:
     return keys
 
 
+def _workload_secret_references(manifest: dict[str, Any]) -> list[tuple[str, str]]:
+    spec = manifest.get("spec", {})
+    if not isinstance(spec, dict):
+        return []
+    references = [(str(secret), "spec.secrets") for secret in spec.get("secrets") or []]
+    agent = spec.get("agent") or {}
+    if isinstance(agent, dict):
+        references.extend(
+            (str(secret), "spec.agent.requiredSecrets")
+            for secret in agent.get("requiredSecrets") or []
+        )
+        auth_token_env = agent.get("authTokenEnv")
+        if auth_token_env:
+            references.append((str(auth_token_env), "spec.agent.authTokenEnv"))
+    return references
+
+
+def _secret_inventory(
+    manifests: list[dict[str, Any]],
+    repo_root: pathlib.Path,
+    *,
+    workload: str | None = None,
+) -> dict[str, Any]:
+    available_env = set(os.environ)
+    available_dotenv = _dotenv_keys(repo_root)
+    inventory: dict[str, dict[str, Any]] = {}
+    for manifest in manifests:
+        workload_name = _workload_name(manifest)
+        if workload and workload_name != workload:
+            continue
+        for secret_name, reference in _workload_secret_references(manifest):
+            item = inventory.setdefault(
+                secret_name,
+                {"workloads": set(), "references": set()},
+            )
+            item["workloads"].add(workload_name)
+            item["references"].add(f"{workload_name}:{reference}")
+
+    secrets = []
+    for name, data in sorted(inventory.items()):
+        source = "missing"
+        if name in available_env:
+            source = "environment"
+        elif name in available_dotenv:
+            source = ".env"
+        secrets.append(
+            {
+                "name": name,
+                "present": source != "missing",
+                "source": source,
+                "workloads": sorted(data["workloads"]),
+                "references": sorted(data["references"]),
+            }
+        )
+    missing = sum(1 for item in secrets if not item["present"])
+    return {
+        "status": "warning" if missing else "passed",
+        "total": len(secrets),
+        "missing": missing,
+        "secrets": secrets,
+    }
+
+
 def _missing_required_env(
     manifests: list[dict[str, Any]],
     repo_root: pathlib.Path,
 ) -> list[str]:
     available = set(os.environ) | _dotenv_keys(repo_root)
-    required: set[str] = set()
-    for manifest in manifests:
-        spec = manifest.get("spec", {})
-        if not isinstance(spec, dict):
-            continue
-        required.update(str(secret) for secret in spec.get("secrets") or [])
-        agent = spec.get("agent") or {}
-        if isinstance(agent, dict):
-            required.update(
-                str(secret) for secret in agent.get("requiredSecrets") or []
-            )
-            auth_token_env = agent.get("authTokenEnv")
-            if auth_token_env:
-                required.add(str(auth_token_env))
+    required = {
+        secret
+        for manifest in manifests
+        for secret, _reference in _workload_secret_references(manifest)
+    }
     return sorted(secret for secret in required if secret not in available)
 
 
@@ -1106,6 +1162,31 @@ def workload_logs(
     ui.info(_run_command(command, cwd=repo_root))
 
 
+@secrets_app.command("list")
+def secrets_list(
+    workload: str | None = typer.Option(
+        None,
+        "--workload",
+        "-w",
+        help="Filter by workload name.",
+    ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Exit with code 2 when required secrets are missing.",
+    ),
+) -> None:
+    """List required secret names and whether they are configured locally."""
+    repo_root = _repo_root()
+    manifests = _load_workload_manifests(repo_root)
+    if workload and workload not in {_workload_name(manifest) for manifest in manifests}:
+        _exit_with_error(f"Unknown workload: {workload}")
+    inventory = _secret_inventory(manifests, repo_root, workload=workload)
+    console.print(Syntax(json.dumps(inventory, indent=2), "json"))
+    if check and inventory["missing"]:
+        raise typer.Exit(code=2)
+
+
 @run_app.command("submit")
 def run_submit(
     workload: str = typer.Argument(..., help="Workload name."),
@@ -1427,7 +1508,8 @@ def up(
             "Missing required environment variables: " + ", ".join(missing_env),
             hint=(
                 "Add them to .env or export them before running `moira up`. "
-                "Use `moira up --agent demo-agent` for a no-secret first run."
+                "Run `moira secrets list` to inspect required names, or use "
+                "`moira up --agent demo-agent` for a no-secret first run."
             ),
         )
 

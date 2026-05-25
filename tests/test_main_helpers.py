@@ -20,6 +20,7 @@ _agent_template_manifest = MAIN_MODULE._agent_template_manifest
 _missing_required_env = MAIN_MODULE._missing_required_env
 _parse_json_input = MAIN_MODULE._parse_json_input
 _render_local_workload_compose = MAIN_MODULE._render_local_workload_compose
+_secret_inventory = MAIN_MODULE._secret_inventory
 
 
 def test_parse_json_input_inline_object() -> None:
@@ -114,6 +115,29 @@ def test_missing_required_env_reports_auth_token_env(tmp_path: Path) -> None:
     manifest = _agent_template_manifest("openclaw")
 
     assert _missing_required_env([manifest], tmp_path) == ["OPENCLAW_GATEWAY_TOKEN"]
+
+
+def test_secret_inventory_reports_names_without_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Secret inventory exposes only names, sources, and workload references."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("HERMES_API_SERVER_KEY", raising=False)
+    manifest = _agent_template_manifest("hermes")
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=sk-test\n",
+        encoding="utf-8",
+    )
+
+    inventory = _secret_inventory([manifest], tmp_path)
+
+    assert "sk-test" not in json.dumps(inventory)
+    items = {item["name"]: item for item in inventory["secrets"]}
+    assert items["OPENAI_API_KEY"]["present"] is True
+    assert items["OPENAI_API_KEY"]["source"] == ".env"
+    assert items["HERMES_API_SERVER_KEY"]["present"] is False
+    assert items["HERMES_API_SERVER_KEY"]["source"] == "missing"
 
 
 def test_render_compose_injects_agent_auth_token_env(tmp_path: Path) -> None:

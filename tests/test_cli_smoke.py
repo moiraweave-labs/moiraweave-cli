@@ -228,6 +228,42 @@ class TestCLIWorkloads:
         assert result.returncode == 0
         assert "mock-model" in result.stdout
 
+    def test_secrets_list_shows_required_names(
+        self, cli_command: list[str], initialized_workspace: Path
+    ) -> None:
+        subprocess.run(
+            [
+                *cli_command,
+                "workload",
+                "new",
+                "hermes",
+                "--type",
+                "agent-service",
+                "--image",
+                "ghcr.io/nousresearch/hermes-agent:latest",
+                "--secret",
+                "OPENAI_API_KEY",
+                "--auth-token-env",
+                "HERMES_API_SERVER_KEY",
+            ],
+            cwd=initialized_workspace,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        result = subprocess.run(
+            [*cli_command, "secrets", "list", "--workload", "hermes"],
+            cwd=initialized_workspace,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0
+        assert "OPENAI_API_KEY" in result.stdout
+        assert "HERMES_API_SERVER_KEY" in result.stdout
+        assert "sk-" not in result.stdout
+
     def test_deploy_local_generates_compose(
         self, cli_command: list[str], initialized_workspace: Path
     ) -> None:
