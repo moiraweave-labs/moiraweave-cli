@@ -1572,9 +1572,9 @@ def up(
     ui.next_steps(
         "MoiraWeave is up",
         [
-            (1, "open http://localhost:3000", "Open the Ops dashboard"),
+            (1, "open http://localhost:3000/agents", "Open the agent console"),
             (2, "sign in as admin / demo-password", "Use local dev credentials"),
-            (3, "Agents -> New Session", "Chat with the demo agent"),
+            (3, "New Session", "Chat with the selected agent"),
         ],
     )
 

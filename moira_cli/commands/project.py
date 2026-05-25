@@ -71,7 +71,7 @@ class ProjectInitCommand(BaseCommand):
             [
                 (1, "moira demo agent", "Create a no-secret local agent"),
                 (2, "moira up", "Start API, worker, UI, storage, and workloads"),
-                (3, "open http://localhost:3000", "Open the Ops dashboard"),
+                (3, "open http://localhost:3000/agents", "Open the agent console"),
                 (4, "sign in as admin / demo-password", "Use local dev credentials"),
             ],
         )

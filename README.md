@@ -25,6 +25,9 @@ when there are no workloads, writes a local `docker-compose.yml` with the Ops
 dashboard enabled, generates workload Compose services, starts API, worker,
 storage, UI, and workloads, waits for readiness, and registers local deployment
 records. The dashboard is available at `http://localhost:3000`.
+Open `http://localhost:3000/agents` after sign-in to land directly in the
+agent console; the first agent and any existing session are selected
+automatically.
 
 Start from another agent template when you want the first run to be a real
 runtime instead of the demo:
