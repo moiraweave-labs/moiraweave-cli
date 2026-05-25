@@ -26,13 +26,23 @@ dashboard enabled, generates workload Compose services, starts API, worker,
 storage, UI, and workloads, waits for readiness, and registers local deployment
 records. The dashboard is available at `http://localhost:3000`.
 
-Use `--deployment-mode external --endpoint <url>` for an agent runtime that is
-already deployed outside MoiraWeave.
+Start from another agent template when you want the first run to be a real
+runtime instead of the demo:
+
+```bash
+moira up --agent hermes
+moira up --agent openclaw
+moira up --agent external-agent --agent-endpoint https://agent.example.com
+```
+
+Hermes/OpenClaw templates validate required secrets before Docker starts. Add
+them to `.env` or export them in the shell. Use `moira up --agent demo-agent`
+for a no-secret first run.
 
 ## Command Surface
 
 - `moira init`: create a MoiraWeave workspace.
-- `moira up`: initialize if needed, start the local stack, and register workloads.
+- `moira up --agent demo-agent|hermes|openclaw|external-agent`: initialize if needed, start the local stack, and register workloads.
 - `moira demo agent`: create a no-secret mock agent workload.
 - `moira workload new|list|show|deploy|status|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.

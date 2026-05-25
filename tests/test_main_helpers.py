@@ -17,8 +17,11 @@ MAIN_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MAIN_MODULE)
 
 _bump_semver = MAIN_MODULE._bump_semver
+_agent_template_manifest = MAIN_MODULE._agent_template_manifest
 _catalog_raw_url_from_uri = MAIN_MODULE._catalog_raw_url_from_uri
+_missing_required_env = MAIN_MODULE._missing_required_env
 _parse_json_input = MAIN_MODULE._parse_json_input
+_render_local_workload_compose = MAIN_MODULE._render_local_workload_compose
 _semver_key = MAIN_MODULE._semver_key
 
 
@@ -98,3 +101,73 @@ def test_catalog_raw_url_for_github_repo() -> None:
     uri = "https://github.com/example/catalog"
     expected = "https://raw.githubusercontent.com/example/catalog/main/catalog.yaml"
     assert _catalog_raw_url_from_uri(uri) == expected
+
+
+def test_agent_template_manifest_for_hermes() -> None:
+    """Hermes first-run template matches the agent runtime contract."""
+    manifest = _agent_template_manifest("hermes")
+
+    assert manifest["metadata"]["name"] == "hermes"
+    assert manifest["spec"]["image"] == "ghcr.io/nousresearch/hermes-agent:latest"
+    assert manifest["spec"]["ports"] == [{"name": "http", "port": 8642}]
+    assert manifest["spec"]["secrets"] == [
+        "OPENAI_API_KEY",
+        "HERMES_API_SERVER_KEY",
+    ]
+    assert manifest["spec"]["agent"]["adapter"] == "hermes"
+    assert manifest["spec"]["agent"]["authTokenEnv"] == "HERMES_API_SERVER_KEY"
+
+
+def test_agent_template_manifest_for_openclaw() -> None:
+    """OpenClaw first-run template carries its adapter and token env."""
+    manifest = _agent_template_manifest("openclaw")
+
+    assert manifest["metadata"]["name"] == "openclaw"
+    assert manifest["spec"]["ports"] == [{"name": "gateway", "port": 18789}]
+    assert manifest["spec"]["secrets"] == ["OPENCLAW_GATEWAY_TOKEN"]
+    assert manifest["spec"]["agent"]["adapter"] == "openclaw"
+    assert manifest["spec"]["agent"]["authTokenEnv"] == "OPENCLAW_GATEWAY_TOKEN"
+
+
+def test_agent_template_manifest_for_external_agent_requires_endpoint() -> None:
+    """External agents need an endpoint before a manifest can be useful."""
+    with pytest.raises(typer.Exit):
+        _agent_template_manifest("external-agent")
+
+
+def test_agent_template_manifest_for_generic_agent_requires_image() -> None:
+    """Generic managed agents must not default to a placeholder image."""
+    with pytest.raises(typer.Exit):
+        _agent_template_manifest("generic-http-agent")
+
+
+def test_missing_required_env_reads_dotenv(tmp_path: Path) -> None:
+    """Secret preflight accepts variables from the process or local .env."""
+    manifest = _agent_template_manifest("hermes")
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=sk-test\nHERMES_API_SERVER_KEY=server-token\n",
+        encoding="utf-8",
+    )
+
+    assert _missing_required_env([manifest], tmp_path) == []
+
+
+def test_missing_required_env_reports_auth_token_env(tmp_path: Path) -> None:
+    """Secret preflight includes adapter auth token variables."""
+    manifest = _agent_template_manifest("openclaw")
+
+    assert _missing_required_env([manifest], tmp_path) == ["OPENCLAW_GATEWAY_TOKEN"]
+
+
+def test_render_compose_injects_agent_auth_token_env(tmp_path: Path) -> None:
+    """Local Compose exposes auth token envs referenced only by the adapter."""
+    manifest = _agent_template_manifest(
+        "generic-http-agent",
+        image="ghcr.io/example/custom-agent:1.0.0",
+    )
+    manifest["spec"]["agent"]["authTokenEnv"] = "AGENT_TOKEN"
+
+    compose = _render_local_workload_compose([manifest], tmp_path)
+
+    env = compose["services"]["generic-agent"]["environment"]
+    assert env["AGENT_TOKEN"] == "${AGENT_TOKEN:?set AGENT_TOKEN}"

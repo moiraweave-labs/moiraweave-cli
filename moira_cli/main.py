@@ -487,6 +487,199 @@ def _demo_agent_manifest(name: str) -> dict[str, Any]:
     }
 
 
+def _agent_template_manifest(
+    template: str,
+    *,
+    name: str | None = None,
+    image: str | None = None,
+    endpoint: str | None = None,
+    port: int | None = None,
+) -> dict[str, Any]:
+    """Return a first-run agent workload manifest."""
+    template_id = template.strip().lower()
+    if template_id in {"demo", "demo-agent"}:
+        return _demo_agent_manifest(name or "demo-agent")
+
+    if template_id == "hermes":
+        workload_name = name or "hermes"
+        runtime_port = port or 8642
+        return {
+            "apiVersion": "moiraweave.io/v1alpha1",
+            "kind": "Workload",
+            "metadata": {
+                "name": workload_name,
+                "labels": {"moiraweave.io/template": "hermes"},
+            },
+            "spec": {
+                "type": "agent-service",
+                "image": image or "ghcr.io/nousresearch/hermes-agent:latest",
+                "deployment": {
+                    "mode": "managed",
+                    "targets": ["local", "kubernetes"],
+                    "serviceName": workload_name,
+                    "localNetwork": "moiraweave-net",
+                },
+                "execution": {"mode": "session", "timeoutSeconds": 172800},
+                "ports": [{"name": "http", "port": runtime_port}],
+                "persistence": {"enabled": True, "mountPath": "/workspace"},
+                "env": {
+                    "API_SERVER_ENABLED": "true",
+                    "API_SERVER_HOST": "0.0.0.0",
+                    "API_SERVER_PORT": str(runtime_port),
+                },
+                "secrets": ["OPENAI_API_KEY", "HERMES_API_SERVER_KEY"],
+                "agent": {
+                    "adapter": "hermes",
+                    "requiredSecrets": ["OPENAI_API_KEY"],
+                    "workspaceMount": "/workspace",
+                    "authTokenEnv": "HERMES_API_SERVER_KEY",
+                    "model": "hermes-agent",
+                    "exposedChannels": ["ui", "api"],
+                    "capabilities": ["chat", "tools", "long-running"],
+                    "pollIntervalSeconds": 2,
+                },
+            },
+        }
+
+    if template_id == "openclaw":
+        workload_name = name or "openclaw"
+        runtime_port = port or 18789
+        return {
+            "apiVersion": "moiraweave.io/v1alpha1",
+            "kind": "Workload",
+            "metadata": {
+                "name": workload_name,
+                "labels": {"moiraweave.io/template": "openclaw"},
+            },
+            "spec": {
+                "type": "agent-service",
+                "image": image or "ghcr.io/openclaw/openclaw:latest",
+                "deployment": {
+                    "mode": "managed",
+                    "targets": ["local", "kubernetes"],
+                    "serviceName": workload_name,
+                    "localNetwork": "moiraweave-net",
+                },
+                "execution": {"mode": "session", "timeoutSeconds": 172800},
+                "ports": [{"name": "gateway", "port": runtime_port}],
+                "persistence": {"enabled": True, "mountPath": "/workspace"},
+                "secrets": ["OPENCLAW_GATEWAY_TOKEN"],
+                "agent": {
+                    "adapter": "openclaw",
+                    "agentId": "main",
+                    "authTokenEnv": "OPENCLAW_GATEWAY_TOKEN",
+                    "workspaceMount": "/workspace",
+                    "exposedChannels": ["ui", "api"],
+                    "capabilities": ["browser", "tools", "long-running"],
+                    "pollIntervalSeconds": 2,
+                },
+            },
+        }
+
+    if template_id == "generic-http-agent":
+        if not image:
+            _exit_with_error(
+                "--agent-image is required when using --agent generic-http-agent"
+            )
+        workload_name = name or "generic-agent"
+        runtime_port = port or 8000
+        return {
+            "apiVersion": "moiraweave.io/v1alpha1",
+            "kind": "Workload",
+            "metadata": {
+                "name": workload_name,
+                "labels": {"moiraweave.io/template": "generic-http-agent"},
+            },
+            "spec": {
+                "type": "agent-service",
+                "image": image,
+                "deployment": {
+                    "mode": "managed",
+                    "targets": ["local", "kubernetes"],
+                    "serviceName": workload_name,
+                    "localNetwork": "moiraweave-net",
+                },
+                "execution": {"mode": "session", "timeoutSeconds": 86400},
+                "ports": [{"name": "http", "port": runtime_port}],
+                "agent": {
+                    "adapter": "generic-http",
+                    "messagePath": "/message",
+                    "statusPath": "/health",
+                    "cancelPath": "/cancel",
+                    "artifactsPath": "/artifacts",
+                    "exposedChannels": ["ui", "api"],
+                },
+            },
+        }
+
+    if template_id == "external-agent":
+        if not endpoint:
+            _exit_with_error(
+                "--agent-endpoint is required when using --agent external-agent"
+            )
+        workload_name = name or "external-agent"
+        return {
+            "apiVersion": "moiraweave.io/v1alpha1",
+            "kind": "Workload",
+            "metadata": {
+                "name": workload_name,
+                "labels": {"moiraweave.io/template": "external-agent"},
+            },
+            "spec": {
+                "type": "agent-service",
+                "deployment": {"mode": "external"},
+                "endpoint": endpoint,
+                "execution": {"mode": "session", "timeoutSeconds": 86400},
+                "agent": {
+                    "adapter": "generic-http",
+                    "exposedChannels": ["ui", "api"],
+                },
+            },
+        }
+
+    _exit_with_error(
+        f"Unknown agent template: {template}",
+        hint="Use demo-agent, hermes, openclaw, generic-http-agent, external-agent, or none.",
+    )
+
+
+def _dotenv_keys(repo_root: pathlib.Path) -> set[str]:
+    path = repo_root / ".env"
+    if not path.exists():
+        return set()
+    keys: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() and value.strip():
+            keys.add(key.strip())
+    return keys
+
+
+def _missing_required_env(
+    manifests: list[dict[str, Any]],
+    repo_root: pathlib.Path,
+) -> list[str]:
+    available = set(os.environ) | _dotenv_keys(repo_root)
+    required: set[str] = set()
+    for manifest in manifests:
+        spec = manifest.get("spec", {})
+        if not isinstance(spec, dict):
+            continue
+        required.update(str(secret) for secret in spec.get("secrets") or [])
+        agent = spec.get("agent") or {}
+        if isinstance(agent, dict):
+            required.update(
+                str(secret) for secret in agent.get("requiredSecrets") or []
+            )
+            auth_token_env = agent.get("authTokenEnv")
+            if auth_token_env:
+                required.add(str(auth_token_env))
+    return sorted(secret for secret in required if secret not in available)
+
+
 def _watch_run(run_id: str, api_url: str, timeout: int) -> None:
     with Progress(
         SpinnerColumn(style="cyan"),
@@ -555,6 +748,11 @@ def _render_local_workload_compose(
         if isinstance(agent, dict):
             for secret in agent.get("requiredSecrets") or []:
                 service["environment"][str(secret)] = f"${{{secret}:?set {secret}}}"
+            auth_token_env = agent.get("authTokenEnv")
+            if auth_token_env:
+                service["environment"][str(auth_token_env)] = (
+                    f"${{{auth_token_env}:?set {auth_token_env}}}"
+                )
 
         ports = []
         for index, port_def in enumerate(spec.get("ports") or []):
@@ -749,6 +947,36 @@ def _ensure_demo_agent(repo_root: pathlib.Path, *, force: bool = False) -> pathl
     if target.exists() and not force:
         return target
     _write_manifest(target, _demo_agent_manifest("demo-agent"))
+    return target
+
+
+def _ensure_agent_template(
+    repo_root: pathlib.Path,
+    template: str,
+    *,
+    name: str | None = None,
+    image: str | None = None,
+    endpoint: str | None = None,
+    port: int | None = None,
+    force: bool = False,
+) -> pathlib.Path | None:
+    template_id = template.strip().lower()
+    if template_id in {"", "none", "off", "false"}:
+        return None
+    manifest = _agent_template_manifest(
+        template,
+        name=name,
+        image=image,
+        endpoint=endpoint,
+        port=port,
+    )
+    workload_name = _workload_name(manifest)
+    if not workload_name:
+        _exit_with_error("Agent template did not include metadata.name")
+    target = _workload_file(repo_root, workload_name)
+    if target.exists() and not force:
+        return target
+    _write_manifest(target, manifest)
     return target
 
 
@@ -1377,6 +1605,35 @@ def up(
         "--demo-agent/--no-demo-agent",
         help="Create a demo agent if the workspace has no workloads.",
     ),
+    agent_template: str = typer.Option(
+        "demo-agent",
+        "--agent",
+        help=(
+            "Agent template to create on an empty workspace: demo-agent, hermes, "
+            "openclaw, generic-http-agent, external-agent, or none."
+        ),
+    ),
+    agent_name: str | None = typer.Option(
+        None,
+        "--agent-name",
+        help="Name for the first-run agent workload.",
+    ),
+    agent_image: str | None = typer.Option(
+        None,
+        "--agent-image",
+        help="Container image override for managed agent templates.",
+    ),
+    agent_endpoint: str | None = typer.Option(
+        None,
+        "--agent-endpoint",
+        help="Base URL for external-agent first-run template.",
+    ),
+    agent_port: int | None = typer.Option(
+        None,
+        "--agent-port",
+        min=1,
+        help="Runtime port override for managed agent templates.",
+    ),
     register: bool = typer.Option(
         True,
         "--register/--no-register",
@@ -1396,10 +1653,41 @@ def up(
         repo_root = pathlib.Path.cwd().resolve()
 
     manifests = _load_workload_manifests(repo_root)
-    if not manifests and demo_agent:
-        demo_path = _ensure_demo_agent(repo_root)
-        ui.success(f"Created demo agent workload: {demo_path.relative_to(repo_root)}")
+    selected_agent = agent_template if isinstance(agent_template, str) else "demo-agent"
+    template_agent_name = agent_name if isinstance(agent_name, str) else None
+    template_agent_image = agent_image if isinstance(agent_image, str) else None
+    template_agent_endpoint = (
+        agent_endpoint if isinstance(agent_endpoint, str) else None
+    )
+    template_agent_port = agent_port if isinstance(agent_port, int) else None
+    if not demo_agent and selected_agent.strip().lower() in {"demo", "demo-agent"}:
+        selected_agent = "none"
+    if not manifests:
+        agent_path = _ensure_agent_template(
+            repo_root,
+            selected_agent,
+            name=template_agent_name,
+            image=template_agent_image,
+            endpoint=template_agent_endpoint,
+            port=template_agent_port,
+        )
+        if agent_path is not None:
+            ui.success(f"Created agent workload: {agent_path.relative_to(repo_root)}")
+        else:
+            ui.warning(
+                "No workloads found. Starting the platform without managed workloads."
+            )
         manifests = _load_workload_manifests(repo_root)
+
+    missing_env = _missing_required_env(manifests, repo_root)
+    if missing_env:
+        _exit_with_error(
+            "Missing required environment variables: " + ", ".join(missing_env),
+            hint=(
+                "Add them to .env or export them before running `moira up`. "
+                "Use `moira up --agent demo-agent` for a no-secret first run."
+            ),
+        )
 
     deploy_root = _deploy_root(repo_root)
     deploy_root.mkdir(parents=True, exist_ok=True)
