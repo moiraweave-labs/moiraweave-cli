@@ -77,13 +77,6 @@ def write_default_moiraweave_config(repo_root: Path, name: str, registry: str) -
         "name": name,
         "registry": registry,
         "runtime_version": "0.1.0",
-        "catalogs": {
-            "moiraweave-official": {
-                "name": "moiraweave-official",
-                "uri": "https://github.com/moiraweave-labs/moiraweave-steps",
-                "enabled": True,
-            }
-        },
         "environments": {
             "local": {"context": "docker-compose", "values": ".env"},
             "dev": {

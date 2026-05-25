@@ -27,16 +27,16 @@ class EnvironmentConfig(BaseModel):
 
 
 class CatalogSourceConfig(BaseModel):
-    """Official step catalog source.
+    """Optional legacy step catalog source.
 
-    :param name: Catalog name (e.g., "moiraweave-official").
+    :param name: Catalog name.
     :param uri: Git or registry URI for the catalog.
     :param version_constraint: Optional semver constraint (e.g., "^1.0.0").
     :param enabled: Whether this catalog is enabled for step discovery.
     """
 
     name: str
-    uri: str = "https://github.com/moiraweave-labs/moiraweave-steps"
+    uri: str = ""
     version_constraint: str = "*"
     enabled: bool = True
 
@@ -49,7 +49,7 @@ class MoiraWeaveConfig(BaseModel):
     :param environments: Named environment configurations.
     :param workloads_dir: Directory containing workload manifests.
     :param artifacts_dir: Directory containing local artifacts.
-    :param catalogs: Named official step catalogs (e.g., moiraweave-official).
+    :param catalogs: Optional legacy step catalogs.
     :param runtime_version: Pinned runtime version for compatibility checks.
     """
 
