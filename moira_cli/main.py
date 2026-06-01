@@ -717,7 +717,12 @@ def _resolve_env_expression(value: str, repo_root: pathlib.Path) -> str:
     if match is None:
         return value
     env_name, default = match.groups()
-    return os.environ.get(env_name) or _dotenv_values(repo_root).get(env_name) or default or value
+    return (
+        os.environ.get(env_name)
+        or _dotenv_values(repo_root).get(env_name)
+        or default
+        or value
+    )
 
 
 def _published_host_port(raw_port: Any, repo_root: pathlib.Path) -> int | None:
@@ -837,7 +842,9 @@ def _doctor_report(
                 ".env",
                 "ok" if env_path.exists() else "error",
                 ".env exists." if env_path.exists() else ".env is missing.",
-                "No action needed." if env_path.exists() else "Run `moira init --non-interactive` or `moira up`.",
+                "No action needed."
+                if env_path.exists()
+                else "Run `moira init --non-interactive` or `moira up`.",
                 {"path": str(env_path)},
             )
         )
@@ -873,7 +880,9 @@ def _doctor_report(
                 )
             )
 
-        demo_present = any(_workload_name(manifest) == "demo-agent" for manifest in manifests)
+        demo_present = any(
+            _workload_name(manifest) == "demo-agent" for manifest in manifests
+        )
         checks.append(
             _doctor_check(
                 "demo-agent",
@@ -912,7 +921,9 @@ def _doctor_report(
                 "Base Docker Compose file exists."
                 if base_compose.exists()
                 else "Base Docker Compose file is missing.",
-                "No action needed." if base_compose.exists() else "Run `moira init --non-interactive`.",
+                "No action needed."
+                if base_compose.exists()
+                else "Run `moira init --non-interactive`.",
                 {"path": str(base_compose)},
             )
         )
@@ -923,7 +934,9 @@ def _doctor_report(
                 "Workload Docker Compose file exists."
                 if workload_compose.exists()
                 else "Workload Docker Compose file has not been generated yet.",
-                "No action needed." if workload_compose.exists() else "`moira up` will generate it before Docker starts.",
+                "No action needed."
+                if workload_compose.exists()
+                else "`moira up` will generate it before Docker starts.",
                 {"path": str(workload_compose)},
             )
         )
@@ -952,8 +965,12 @@ def _doctor_report(
         _doctor_check(
             "docker-cli",
             "ok" if docker_path else "error",
-            f"Docker CLI found at {docker_path}." if docker_path else "Docker CLI is not installed or not on PATH.",
-            "No action needed." if docker_path else "Install Docker Desktop or Docker Engine with Compose.",
+            f"Docker CLI found at {docker_path}."
+            if docker_path
+            else "Docker CLI is not installed or not on PATH.",
+            "No action needed."
+            if docker_path
+            else "Install Docker Desktop or Docker Engine with Compose.",
         )
     )
     if docker_path:
@@ -965,7 +982,9 @@ def _doctor_report(
                 compose_output or "Docker Compose plugin is available."
                 if compose_ok
                 else compose_output or "Docker Compose plugin is unavailable.",
-                "No action needed." if compose_ok else "Install or enable the Docker Compose plugin.",
+                "No action needed."
+                if compose_ok
+                else "Install or enable the Docker Compose plugin.",
             )
         )
         daemon_ok, daemon_output = _probe_command(
@@ -978,12 +997,16 @@ def _doctor_report(
                 f"Docker daemon is reachable ({daemon_output})."
                 if daemon_ok
                 else daemon_output or "Docker daemon is not reachable.",
-                "No action needed." if daemon_ok else "Start Docker and retry `moira up`.",
+                "No action needed."
+                if daemon_ok
+                else "Start Docker and retry `moira up`.",
             )
         )
         if daemon_ok and workspace_root is not None:
             base_compose = workspace_root / "docker-compose.yml"
-            workload_compose = _deploy_root(workspace_root) / "docker-compose.workloads.yml"
+            workload_compose = (
+                _deploy_root(workspace_root) / "docker-compose.workloads.yml"
+            )
             images = sorted(
                 set(
                     [
@@ -1019,7 +1042,9 @@ def _doctor_report(
             f"API gateway is reachable: {ready_message}."
             if ready_ok
             else f"API gateway is not reachable yet: {ready_message}.",
-            "No action needed." if ready_ok else "`moira up` will start the API, or run `docker compose logs api-gateway`.",
+            "No action needed."
+            if ready_ok
+            else "`moira up` will start the API, or run `docker compose logs api-gateway`.",
             {"url": f"{api_url.rstrip('/')}/ready"},
         )
     )
@@ -1043,7 +1068,11 @@ def _doctor_report(
         parsed = urlparse(api_url)
         api_port = parsed.port or _env_int(workspace_root, "API_GATEWAY_PORT", 8000)
         for service, (env_name, default_port) in _LOCAL_PLATFORM_PORTS.items():
-            port = api_port if service == "api-gateway" else _env_int(workspace_root, env_name, default_port)
+            port = (
+                api_port
+                if service == "api-gateway"
+                else _env_int(workspace_root, env_name, default_port)
+            )
             open_now = _is_local_port_open(port)
             port_status[service] = {
                 "env": env_name,

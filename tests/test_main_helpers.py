@@ -231,7 +231,9 @@ def test_doctor_report_blocks_missing_docker(
         repo_root=workspace,
     )
 
-    docker_check = next(check for check in report["checks"] if check["name"] == "docker-cli")
+    docker_check = next(
+        check for check in report["checks"] if check["name"] == "docker-cli"
+    )
     assert docker_check["status"] == "error"
     assert _doctor_has_errors(report) is True
 
@@ -252,7 +254,9 @@ services:
         encoding="utf-8",
     )
     monkeypatch.setattr(MAIN_MODULE.shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(MAIN_MODULE, "_probe_command", lambda *_args, **_kwargs: (True, "ok"))
+    monkeypatch.setattr(
+        MAIN_MODULE, "_probe_command", lambda *_args, **_kwargs: (True, "ok")
+    )
     monkeypatch.setattr(MAIN_MODULE, "_api_ready", lambda _url: (False, "offline"))
     monkeypatch.setattr(
         MAIN_MODULE,
@@ -267,7 +271,9 @@ services:
         repo_root=workspace,
     )
 
-    port_check = next(check for check in report["checks"] if check["name"] == "compose-ports")
+    port_check = next(
+        check for check in report["checks"] if check["name"] == "compose-ports"
+    )
     assert port_check["status"] == "error"
     assert port_check["metadata"]["duplicates"] == [8000]
 

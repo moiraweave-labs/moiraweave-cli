@@ -64,7 +64,9 @@ def test_moira_up_demo_agent_chat_fresh_workspace(tmp_path: Path) -> None:
         "qdrant/qdrant:v1.9.2",
         "python:3.13-slim",
     ]
-    missing_images = [image for image in required_images if not _image_available(image, env)]
+    missing_images = [
+        image for image in required_images if not _image_available(image, env)
+    ]
     if missing_images:
         pytest.skip(
             "required onboarding images are not locally available or pullable: "
