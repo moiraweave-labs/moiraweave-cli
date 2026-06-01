@@ -55,7 +55,9 @@ class TestInitWorkflow:
     def test_generated_compose_includes_ui_by_default(self, workspace: Path) -> None:
         compose = yaml.safe_load((workspace / "docker-compose.yml").read_text())
         ui = compose["services"]["ui"]
-        assert ui["image"] == "ghcr.io/moiraweave-labs/moiraweave-ui:latest"
+        assert ui["image"] == (
+            "${MOIRAWEAVE_UI_IMAGE:-ghcr.io/moiraweave-labs/moiraweave-ui:latest}"
+        )
         assert "profiles" not in ui
         assert ui["environment"]["API_PROXY_PASS"] == "http://api-gateway:8000"
 
@@ -63,6 +65,12 @@ class TestInitWorkflow:
         env_text = (workspace / ".env").read_text()
         assert "API_GATEWAY_PORT=8000" in env_text
         assert "MOIRAWEAVE_UI_PORT=3000" in env_text
+        assert "POSTGRES_PORT=5432" in env_text
+        assert "REDIS_PORT=6379" in env_text
+        assert "QDRANT_PORT=6333" in env_text
+        assert "MOIRAWEAVE_API_GATEWAY_IMAGE=" in env_text
+        assert "MOIRAWEAVE_WORKER_IMAGE=" in env_text
+        assert "MOIRAWEAVE_UI_IMAGE=" in env_text
 
 
 @pytest.mark.integration

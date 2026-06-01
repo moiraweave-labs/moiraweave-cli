@@ -27,7 +27,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     networks:
       - moiraweave-net
     volumes:
@@ -45,7 +45,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-moiraweave}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-moiraweave-dev}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     networks:
       - moiraweave-net
     volumes:
@@ -59,14 +59,14 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.9.2
     ports:
-      - "6333:6333"
+      - "${QDRANT_PORT:-6333}:6333"
     networks:
       - moiraweave-net
     volumes:
       - qdrant_data:/qdrant/storage
 
   worker:
-    image: ghcr.io/moiraweave-labs/moiraweave/worker:latest
+    image: ${MOIRAWEAVE_WORKER_IMAGE:-ghcr.io/moiraweave-labs/moiraweave/worker:latest}
     depends_on:
       redis:
         condition: service_healthy
@@ -86,7 +86,7 @@ services:
       - ./.moiraweave/artifacts:/workspace/artifacts
 
   api-gateway:
-    image: ghcr.io/moiraweave-labs/moiraweave/api-gateway:latest
+    image: ${MOIRAWEAVE_API_GATEWAY_IMAGE:-ghcr.io/moiraweave-labs/moiraweave/api-gateway:latest}
     depends_on:
       redis:
         condition: service_healthy
@@ -108,7 +108,7 @@ services:
       - ./.moiraweave/artifacts:/workspace/artifacts
 
   ui:
-    image: ghcr.io/moiraweave-labs/moiraweave-ui:latest
+    image: ${MOIRAWEAVE_UI_IMAGE:-ghcr.io/moiraweave-labs/moiraweave-ui:latest}
     depends_on:
       api-gateway:
         condition: service_started

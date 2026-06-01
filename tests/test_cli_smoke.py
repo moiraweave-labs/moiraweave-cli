@@ -312,7 +312,9 @@ class TestCLIWorkloads:
             (initialized_workspace / "docker-compose.yml").read_text(encoding="utf-8")
         )
         ui = compose["services"]["ui"]
-        assert ui["image"] == "ghcr.io/moiraweave-labs/moiraweave-ui:latest"
+        assert ui["image"] == (
+            "${MOIRAWEAVE_UI_IMAGE:-ghcr.io/moiraweave-labs/moiraweave-ui:latest}"
+        )
         assert "profiles" not in ui
         assert ui["ports"] == ["${MOIRAWEAVE_UI_PORT:-3000}:80"]
         assert ui["networks"] == ["moiraweave-net"]
@@ -368,6 +370,7 @@ class TestCLIDeployRegistration:
             wait_timeout=1,
             demo_agent=True,
             register=True,
+            skip_doctor=True,
         )
 
         assert (tmp_path / "moiraweave.yaml").exists()

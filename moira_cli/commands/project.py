@@ -69,10 +69,14 @@ class ProjectInitCommand(BaseCommand):
         self.ui.next_steps(
             "Next steps",
             [
-                (1, "moira demo agent", "Create a no-secret local agent"),
-                (2, "moira up", "Start API, worker, UI, storage, and workloads"),
-                (3, "open http://localhost:3000/agents", "Open the agent console"),
-                (4, "sign in as admin / demo-password", "Use local dev credentials"),
+                (1, "moira up", "Create a demo agent and start the full local stack"),
+                (2, "open http://localhost:3000/agents", "Open the agent console"),
+                (3, "sign in as admin / demo-password", "Use local dev credentials"),
+                (
+                    4,
+                    'moira agent chat demo-agent "hello" --watch',
+                    "Run a terminal smoke test",
+                ),
             ],
         )
 

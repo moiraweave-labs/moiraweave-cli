@@ -17,10 +17,55 @@ MAIN_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MAIN_MODULE)
 
 _agent_template_manifest = MAIN_MODULE._agent_template_manifest
+_doctor_has_errors = MAIN_MODULE._doctor_has_errors
+_doctor_report = MAIN_MODULE._doctor_report
 _missing_required_env = MAIN_MODULE._missing_required_env
 _parse_json_input = MAIN_MODULE._parse_json_input
 _render_local_workload_compose = MAIN_MODULE._render_local_workload_compose
 _secret_inventory = MAIN_MODULE._secret_inventory
+
+
+def _write_workspace(tmp_path: Path) -> Path:
+    """Create a minimal initialized workspace for helper tests."""
+    (tmp_path / "moiraweave.yaml").write_text(
+        """
+name: test
+registry: ghcr.io/test
+runtime_version: 0.1.0
+workloads_dir: .moiraweave/workloads
+artifacts_dir: .moiraweave/artifacts
+deploy_dir: .moiraweave/deploy
+environments:
+  local:
+    context: docker-compose
+    values: .env
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "API_GATEWAY_PORT=8000\nMOIRAWEAVE_UI_PORT=3000\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docker-compose.yml").write_text(
+        """
+services:
+  api-gateway:
+    ports:
+      - "${API_GATEWAY_PORT:-8000}:8000"
+  ui:
+    ports:
+      - "${MOIRAWEAVE_UI_PORT:-3000}:80"
+""".strip(),
+        encoding="utf-8",
+    )
+    workload = tmp_path / ".moiraweave" / "workloads" / "demo-agent"
+    workload.mkdir(parents=True)
+    (tmp_path / ".moiraweave" / "deploy").mkdir(parents=True)
+    (workload / "workload.yaml").write_text(
+        MAIN_MODULE.yaml.safe_dump(_agent_template_manifest("demo-agent")),
+        encoding="utf-8",
+    )
+    return tmp_path
 
 
 def test_parse_json_input_inline_object() -> None:
@@ -152,6 +197,79 @@ def test_render_compose_injects_agent_auth_token_env(tmp_path: Path) -> None:
 
     env = compose["services"]["generic-agent"]["environment"]
     assert env["AGENT_TOKEN"] == "${AGENT_TOKEN:?set AGENT_TOKEN}"
+
+
+def test_render_compose_does_not_publish_demo_agent_host_port(
+    tmp_path: Path,
+) -> None:
+    """The first-run demo agent must not collide with the API gateway on 8000."""
+    manifest = _agent_template_manifest("demo-agent")
+
+    compose = _render_local_workload_compose([manifest], tmp_path)
+
+    assert "ports" not in compose["services"]["demo-agent"]
+
+
+def test_doctor_report_blocks_missing_docker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctor reports missing Docker as a blocking onboarding error."""
+    workspace = _write_workspace(tmp_path)
+    monkeypatch.setattr(MAIN_MODULE.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(MAIN_MODULE, "_api_ready", lambda _url: (False, "offline"))
+    monkeypatch.setattr(
+        MAIN_MODULE,
+        "_url_reachable",
+        lambda _url: (False, "offline"),
+    )
+    monkeypatch.setattr(MAIN_MODULE, "_is_local_port_open", lambda _port: False)
+
+    report = _doctor_report(
+        target="local",
+        api_url="http://localhost:8000",
+        repo_root=workspace,
+    )
+
+    docker_check = next(check for check in report["checks"] if check["name"] == "docker-cli")
+    assert docker_check["status"] == "error"
+    assert _doctor_has_errors(report) is True
+
+
+def test_doctor_report_detects_duplicate_compose_ports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctor catches generated Compose files that publish the same host port."""
+    workspace = _write_workspace(tmp_path)
+    (workspace / ".moiraweave" / "deploy" / "docker-compose.workloads.yml").write_text(
+        """
+services:
+  agent:
+    ports:
+      - "8000:8000"
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MAIN_MODULE.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(MAIN_MODULE, "_probe_command", lambda *_args, **_kwargs: (True, "ok"))
+    monkeypatch.setattr(MAIN_MODULE, "_api_ready", lambda _url: (False, "offline"))
+    monkeypatch.setattr(
+        MAIN_MODULE,
+        "_url_reachable",
+        lambda _url: (False, "offline"),
+    )
+    monkeypatch.setattr(MAIN_MODULE, "_is_local_port_open", lambda _port: False)
+
+    report = _doctor_report(
+        target="local",
+        api_url="http://localhost:8000",
+        repo_root=workspace,
+    )
+
+    port_check = next(check for check in report["checks"] if check["name"] == "compose-ports")
+    assert port_check["status"] == "error"
+    assert port_check["metadata"]["duplicates"] == [8000]
 
 
 def test_agent_chat_creates_session_and_sends_message(

@@ -17,24 +17,32 @@ moira --help
 ## Quickstart
 
 ```bash
+mkdir my-moiraweave-workspace
+cd my-moiraweave-workspace
 moira up
+moira agent chat demo-agent "hello from the CLI" --watch
 ```
 
 `moira up` initializes the workspace if needed, creates a no-secret demo agent
 when there are no workloads, writes a local `docker-compose.yml` with the Ops
-dashboard enabled, generates workload Compose services, starts API, worker,
-storage, UI, and workloads, waits for readiness, and registers local deployment
-records. The dashboard is available at `http://localhost:3000`.
+dashboard enabled, generates workload Compose services, runs `moira doctor`,
+starts API, worker, storage, UI, and workloads, waits for readiness, and
+registers local deployment records. The dashboard is available at
+`http://localhost:3000`.
 Open `http://localhost:3000/agents` after sign-in to land directly in the
 agent console; the first agent and any existing session are selected
 automatically.
 
-For a terminal-only smoke test, send one message without manually creating a
-session first:
+Use `moira doctor` whenever the local stack does not start cleanly:
 
 ```bash
-moira agent chat demo-agent "hello from the CLI" --watch
+moira doctor
+moira doctor --json
 ```
+
+For development or private registries, override platform images in `.env`:
+`MOIRAWEAVE_API_GATEWAY_IMAGE`, `MOIRAWEAVE_WORKER_IMAGE`, and
+`MOIRAWEAVE_UI_IMAGE`.
 
 Start from another agent template when you want the first run to be a real
 runtime instead of the demo:
@@ -52,7 +60,8 @@ for a no-secret first run.
 ## Command Surface
 
 - `moira init`: create a MoiraWeave workspace.
-- `moira up --agent demo-agent|hermes|openclaw|external-agent`: initialize if needed, start the local stack, and register workloads.
+- `moira up --agent demo-agent|hermes|openclaw|generic-http-agent|external-agent`: initialize if needed, start the local stack, and register workloads.
+- `moira doctor`: diagnose local onboarding blockers before Docker starts.
 - `moira demo agent`: create a no-secret mock agent workload.
 - `moira workload new|list|show|deploy|status|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.

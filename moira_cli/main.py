@@ -5,9 +5,14 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
+import shutil
+import socket
 import subprocess
 import time
+from collections import Counter
 from typing import Any, NoReturn
+from urllib.parse import urlparse
 
 import httpx
 import typer
@@ -26,6 +31,14 @@ from moira_cli.ui import get_ui
 
 DEFAULT_API_URL = "http://localhost:8000"
 _TERMINAL_RUN_STATES = {"succeeded", "failed", "canceled", "lost"}
+_DOCTOR_STATUS_ORDER = {"ok": 0, "warning": 1, "error": 2}
+_LOCAL_PLATFORM_PORTS = {
+    "api-gateway": ("API_GATEWAY_PORT", 8000),
+    "ui": ("MOIRAWEAVE_UI_PORT", 3000),
+    "postgres": ("POSTGRES_PORT", 5432),
+    "redis": ("REDIS_PORT", 6379),
+    "qdrant": ("QDRANT_PORT", 6333),
+}
 
 console = Console()
 ui = get_ui()
@@ -99,6 +112,30 @@ def _run_command(command: list[str], cwd: pathlib.Path | None = None) -> str:
         stderr = proc.stderr.strip() or "unknown error"
         _exit_with_error(f"Command failed: {' '.join(command)}\n{stderr}")
     return proc.stdout.strip()
+
+
+def _probe_command(
+    command: list[str],
+    cwd: pathlib.Path | None = None,
+    *,
+    timeout: float = 5.0,
+) -> tuple[bool, str]:
+    """Run a command for diagnostics without exiting the process."""
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return False, "command not found"
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {timeout:g}s"
+    output = proc.stdout.strip() or proc.stderr.strip()
+    return proc.returncode == 0, output
 
 
 def _load_yaml_file(path: pathlib.Path) -> dict[str, Any]:
@@ -239,6 +276,13 @@ def _workload_type(manifest: dict[str, Any]) -> str:
     if isinstance(spec, dict):
         return str(spec.get("type", ""))
     return ""
+
+
+def _first_agent_workload_name(manifests: list[dict[str, Any]]) -> str:
+    for manifest in manifests:
+        if _workload_type(manifest) == "agent-service" and _workload_name(manifest):
+            return _workload_name(manifest)
+    return "demo-agent"
 
 
 def _write_manifest(path: pathlib.Path, manifest: dict[str, Any]) -> None:
@@ -487,19 +531,23 @@ def _agent_template_manifest(
     )
 
 
-def _dotenv_keys(repo_root: pathlib.Path) -> set[str]:
+def _dotenv_values(repo_root: pathlib.Path) -> dict[str, str]:
     path = repo_root / ".env"
     if not path.exists():
-        return set()
-    keys: set[str] = set()
+        return {}
+    values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key, _, value = stripped.partition("=")
         if key.strip() and value.strip():
-            keys.add(key.strip())
-    return keys
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _dotenv_keys(repo_root: pathlib.Path) -> set[str]:
+    return set(_dotenv_values(repo_root))
 
 
 def _workload_secret_references(manifest: dict[str, Any]) -> list[tuple[str, str]]:
@@ -578,6 +626,491 @@ def _missing_required_env(
     return sorted(secret for secret in required if secret not in available)
 
 
+def _doctor_check(
+    name: str,
+    status: str,
+    message: str,
+    recommendation: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "message": message,
+        "recommendation": recommendation,
+        "metadata": metadata or {},
+    }
+
+
+def _doctor_has_errors(report: dict[str, Any]) -> bool:
+    return any(check["status"] == "error" for check in report["checks"])
+
+
+def _doctor_overall_status(checks: list[dict[str, Any]]) -> str:
+    if not checks:
+        return "ok"
+    return max(
+        (str(check["status"]) for check in checks),
+        key=lambda status: _DOCTOR_STATUS_ORDER.get(status, 0),
+    )
+
+
+def _safe_load_workload_manifests(
+    repo_root: pathlib.Path,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    root = _workloads_root(repo_root)
+    manifests: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for path in sorted(root.glob("*/workload.yaml")):
+        try:
+            manifest = dict(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+        except Exception as exc:
+            errors.append(f"{path.relative_to(repo_root)}: {exc}")
+            continue
+        manifest["_path"] = str(path)
+        manifests.append(manifest)
+    return manifests, errors
+
+
+def _env_int(repo_root: pathlib.Path, name: str, default: int) -> int:
+    raw = os.environ.get(name) or _dotenv_values(repo_root).get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _api_ready(api_url: str) -> tuple[bool, str]:
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            response = client.get(f"{api_url.rstrip('/')}/ready")
+        if response.status_code < 500:
+            return True, f"ready endpoint returned HTTP {response.status_code}"
+        return False, f"ready endpoint returned HTTP {response.status_code}"
+    except httpx.HTTPError as exc:
+        return False, str(exc)
+
+
+def _url_reachable(url: str) -> tuple[bool, str]:
+    try:
+        with httpx.Client(timeout=2.0, follow_redirects=True) as client:
+            response = client.get(url)
+        if response.status_code < 500:
+            return True, f"HTTP {response.status_code}"
+        return False, f"HTTP {response.status_code}"
+    except httpx.HTTPError as exc:
+        return False, str(exc)
+
+
+def _is_local_port_open(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _resolve_env_expression(value: str, repo_root: pathlib.Path) -> str:
+    match = re.fullmatch(r"\$\{([A-Z0-9_]+)(?::-(.+))?\}", value)
+    if match is None:
+        return value
+    env_name, default = match.groups()
+    return os.environ.get(env_name) or _dotenv_values(repo_root).get(env_name) or default or value
+
+
+def _published_host_port(raw_port: Any, repo_root: pathlib.Path) -> int | None:
+    if isinstance(raw_port, int):
+        return raw_port
+    if not isinstance(raw_port, str):
+        return None
+    if raw_port.startswith("${") and "}" in raw_port:
+        host_part = raw_port[: raw_port.index("}") + 1]
+    else:
+        host_part = raw_port.split(":", maxsplit=1)[0]
+    host_part = _resolve_env_expression(host_part, repo_root)
+    try:
+        return int(host_part)
+    except ValueError:
+        return None
+
+
+def _compose_published_ports(path: pathlib.Path, repo_root: pathlib.Path) -> list[int]:
+    if not path.exists():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    services = data.get("services") if isinstance(data, dict) else {}
+    if not isinstance(services, dict):
+        return []
+    ports: list[int] = []
+    for service in services.values():
+        if not isinstance(service, dict):
+            continue
+        for raw_port in service.get("ports") or []:
+            port = _published_host_port(raw_port, repo_root)
+            if port is not None:
+                ports.append(port)
+    return ports
+
+
+def _compose_images(path: pathlib.Path, repo_root: pathlib.Path) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    services = data.get("services") if isinstance(data, dict) else {}
+    if not isinstance(services, dict):
+        return []
+    images: list[str] = []
+    for service in services.values():
+        if not isinstance(service, dict):
+            continue
+        image = service.get("image")
+        if isinstance(image, str):
+            images.append(_resolve_env_expression(image, repo_root))
+    return images
+
+
+def _docker_image_available(image: str) -> tuple[bool, str]:
+    local_ok, local_output = _probe_command(
+        ["docker", "image", "inspect", image],
+        timeout=3.0,
+    )
+    if local_ok:
+        return True, f"{image} is present locally."
+    remote_ok, remote_output = _probe_command(
+        ["docker", "manifest", "inspect", image],
+        timeout=10.0,
+    )
+    if remote_ok:
+        return True, f"{image} is available remotely."
+    return False, remote_output or local_output or "image is not available"
+
+
+def _doctor_report(
+    *,
+    target: str,
+    api_url: str,
+    repo_root: pathlib.Path | None = None,
+) -> dict[str, Any]:
+    """Build a local diagnostics report for onboarding and automation."""
+    checks: list[dict[str, Any]] = []
+    workspace_root = repo_root
+    if workspace_root is None:
+        try:
+            workspace_root = find_repo_root()
+        except FileNotFoundError:
+            workspace_root = pathlib.Path.cwd().resolve()
+            checks.append(
+                _doctor_check(
+                    "workspace",
+                    "error",
+                    "No MoiraWeave workspace found.",
+                    "Run `moira up` from an empty directory to initialize one.",
+                    {"path": str(workspace_root)},
+                )
+            )
+    if workspace_root is not None and not any(
+        check["name"] == "workspace" for check in checks
+    ):
+        checks.append(
+            _doctor_check(
+                "workspace",
+                "ok",
+                f"Workspace detected at {workspace_root}.",
+                "No action needed.",
+                {"path": str(workspace_root)},
+            )
+        )
+
+    manifests: list[dict[str, Any]] = []
+    if workspace_root is not None and (workspace_root / "moiraweave.yaml").exists():
+        env_path = workspace_root / ".env"
+        checks.append(
+            _doctor_check(
+                ".env",
+                "ok" if env_path.exists() else "error",
+                ".env exists." if env_path.exists() else ".env is missing.",
+                "No action needed." if env_path.exists() else "Run `moira init --non-interactive` or `moira up`.",
+                {"path": str(env_path)},
+            )
+        )
+
+        manifests, manifest_errors = _safe_load_workload_manifests(workspace_root)
+        if manifest_errors:
+            checks.append(
+                _doctor_check(
+                    "workload-manifests",
+                    "error",
+                    "One or more workload manifests are invalid.",
+                    "Fix the YAML before starting the local stack.",
+                    {"errors": manifest_errors},
+                )
+            )
+        elif manifests:
+            checks.append(
+                _doctor_check(
+                    "workload-manifests",
+                    "ok",
+                    f"Found {len(manifests)} workload manifest(s).",
+                    "No action needed.",
+                    {"workloads": [_workload_name(manifest) for manifest in manifests]},
+                )
+            )
+        else:
+            checks.append(
+                _doctor_check(
+                    "workload-manifests",
+                    "warning",
+                    "No workload manifests found.",
+                    "Run `moira up --agent demo-agent` for a no-secret first run.",
+                )
+            )
+
+        demo_present = any(_workload_name(manifest) == "demo-agent" for manifest in manifests)
+        checks.append(
+            _doctor_check(
+                "demo-agent",
+                "ok" if demo_present else "warning",
+                "Demo agent manifest is available."
+                if demo_present
+                else "Demo agent manifest is not present.",
+                "No action needed."
+                if demo_present
+                else "Use `moira up --agent demo-agent` when you want a no-secret smoke test.",
+            )
+        )
+
+        secret_inventory = _secret_inventory(manifests, workspace_root)
+        missing = int(secret_inventory["missing"])
+        checks.append(
+            _doctor_check(
+                "secrets",
+                "error" if missing else "ok",
+                f"{missing} required secret(s) missing."
+                if missing
+                else "All required secret names are present.",
+                "Run `moira secrets list` and add missing names to .env or your shell."
+                if missing
+                else "No action needed.",
+                {"inventory": secret_inventory},
+            )
+        )
+
+        base_compose = workspace_root / "docker-compose.yml"
+        workload_compose = _deploy_root(workspace_root) / "docker-compose.workloads.yml"
+        checks.append(
+            _doctor_check(
+                "compose-base",
+                "ok" if base_compose.exists() else "error",
+                "Base Docker Compose file exists."
+                if base_compose.exists()
+                else "Base Docker Compose file is missing.",
+                "No action needed." if base_compose.exists() else "Run `moira init --non-interactive`.",
+                {"path": str(base_compose)},
+            )
+        )
+        checks.append(
+            _doctor_check(
+                "compose-workloads",
+                "ok" if workload_compose.exists() else "warning",
+                "Workload Docker Compose file exists."
+                if workload_compose.exists()
+                else "Workload Docker Compose file has not been generated yet.",
+                "No action needed." if workload_compose.exists() else "`moira up` will generate it before Docker starts.",
+                {"path": str(workload_compose)},
+            )
+        )
+        ports = [
+            *_compose_published_ports(base_compose, workspace_root),
+            *_compose_published_ports(workload_compose, workspace_root),
+        ]
+        duplicates = sorted(port for port, count in Counter(ports).items() if count > 1)
+        checks.append(
+            _doctor_check(
+                "compose-ports",
+                "error" if duplicates else "ok",
+                f"Duplicate published host ports: {', '.join(map(str, duplicates))}."
+                if duplicates
+                else "No duplicate published host ports detected in generated Compose files.",
+                "Change workload ports or platform port environment variables."
+                if duplicates
+                else "No action needed.",
+                {"duplicates": duplicates},
+            )
+        )
+
+    docker_path = shutil.which("docker")
+    daemon_ok = False
+    checks.append(
+        _doctor_check(
+            "docker-cli",
+            "ok" if docker_path else "error",
+            f"Docker CLI found at {docker_path}." if docker_path else "Docker CLI is not installed or not on PATH.",
+            "No action needed." if docker_path else "Install Docker Desktop or Docker Engine with Compose.",
+        )
+    )
+    if docker_path:
+        compose_ok, compose_output = _probe_command(["docker", "compose", "version"])
+        checks.append(
+            _doctor_check(
+                "docker-compose",
+                "ok" if compose_ok else "error",
+                compose_output or "Docker Compose plugin is available."
+                if compose_ok
+                else compose_output or "Docker Compose plugin is unavailable.",
+                "No action needed." if compose_ok else "Install or enable the Docker Compose plugin.",
+            )
+        )
+        daemon_ok, daemon_output = _probe_command(
+            ["docker", "info", "--format", "{{.ServerVersion}}"]
+        )
+        checks.append(
+            _doctor_check(
+                "docker-daemon",
+                "ok" if daemon_ok else "error",
+                f"Docker daemon is reachable ({daemon_output})."
+                if daemon_ok
+                else daemon_output or "Docker daemon is not reachable.",
+                "No action needed." if daemon_ok else "Start Docker and retry `moira up`.",
+            )
+        )
+        if daemon_ok and workspace_root is not None:
+            base_compose = workspace_root / "docker-compose.yml"
+            workload_compose = _deploy_root(workspace_root) / "docker-compose.workloads.yml"
+            images = sorted(
+                set(
+                    [
+                        *_compose_images(base_compose, workspace_root),
+                        *_compose_images(workload_compose, workspace_root),
+                    ]
+                )
+            )
+            unavailable: dict[str, str] = {}
+            for image in images:
+                image_ok, image_message = _docker_image_available(image)
+                if not image_ok:
+                    unavailable[image] = image_message
+            checks.append(
+                _doctor_check(
+                    "container-images",
+                    "error" if unavailable else "ok",
+                    f"{len(unavailable)} container image(s) are not accessible."
+                    if unavailable
+                    else f"{len(images)} container image(s) are locally present or pullable.",
+                    "Publish/login to the registry or override MOIRAWEAVE_*_IMAGE in .env."
+                    if unavailable
+                    else "No action needed.",
+                    {"unavailable": unavailable, "images": images},
+                )
+            )
+
+    ready_ok, ready_message = _api_ready(api_url)
+    checks.append(
+        _doctor_check(
+            "api-ready",
+            "ok" if ready_ok else "warning",
+            f"API gateway is reachable: {ready_message}."
+            if ready_ok
+            else f"API gateway is not reachable yet: {ready_message}.",
+            "No action needed." if ready_ok else "`moira up` will start the API, or run `docker compose logs api-gateway`.",
+            {"url": f"{api_url.rstrip('/')}/ready"},
+        )
+    )
+
+    if workspace_root is not None:
+        ui_port = _env_int(workspace_root, "MOIRAWEAVE_UI_PORT", 3000)
+        ui_ok, ui_message = _url_reachable(f"http://localhost:{ui_port}")
+        checks.append(
+            _doctor_check(
+                "ui",
+                "ok" if ui_ok else "warning",
+                f"UI is reachable: {ui_message}."
+                if ui_ok
+                else f"UI is not reachable yet: {ui_message}.",
+                "No action needed." if ui_ok else "`moira up` will start the UI.",
+                {"url": f"http://localhost:{ui_port}"},
+            )
+        )
+
+        port_status: dict[str, dict[str, Any]] = {}
+        parsed = urlparse(api_url)
+        api_port = parsed.port or _env_int(workspace_root, "API_GATEWAY_PORT", 8000)
+        for service, (env_name, default_port) in _LOCAL_PLATFORM_PORTS.items():
+            port = api_port if service == "api-gateway" else _env_int(workspace_root, env_name, default_port)
+            open_now = _is_local_port_open(port)
+            port_status[service] = {
+                "env": env_name,
+                "port": port,
+                "open": open_now,
+            }
+        occupied = [
+            f"{service}:{data['port']}"
+            for service, data in port_status.items()
+            if data["open"]
+        ]
+        checks.append(
+            _doctor_check(
+                "local-ports",
+                "ok" if ready_ok or not occupied else "error",
+                "Platform ports are free or already serving MoiraWeave."
+                if ready_ok or not occupied
+                else f"Some local ports are already open: {', '.join(occupied)}.",
+                "No action needed."
+                if ready_ok or not occupied
+                else "Stop the conflicting process or change the matching port in .env.",
+                {"ports": port_status},
+            )
+        )
+
+    return {
+        "target": target,
+        "api_url": api_url,
+        "workspace": str(workspace_root) if workspace_root is not None else None,
+        "status": _doctor_overall_status(checks),
+        "checks": checks,
+    }
+
+
+def _print_doctor_report(report: dict[str, Any]) -> None:
+    table = ui.table(
+        title=f"MoiraWeave doctor ({report['target']})",
+        columns=[
+            ("Check", "cyan"),
+            ("Status", "bold"),
+            ("Message", "white"),
+            ("Action", "bright_black"),
+        ],
+    )
+    for check in report["checks"]:
+        status_label = str(check["status"]).upper()
+        if check["status"] == "ok":
+            status_label = f"[green]{status_label}[/green]"
+        elif check["status"] == "warning":
+            status_label = f"[yellow]{status_label}[/yellow]"
+        else:
+            status_label = f"[red]{status_label}[/red]"
+        table.add_row(
+            str(check["name"]),
+            status_label,
+            str(check["message"]),
+            str(check["recommendation"]),
+        )
+    ui.print_table(table)
+    if report["status"] == "ok":
+        ui.success("MoiraWeave local diagnostics passed.")
+    elif report["status"] == "warning":
+        ui.warning("MoiraWeave local diagnostics passed with warnings.")
+    else:
+        ui.error("MoiraWeave local diagnostics found blocking errors.")
+
+
 def _watch_run(run_id: str, api_url: str, timeout: int) -> None:
     with Progress(
         SpinnerColumn(style="cyan"),
@@ -652,16 +1185,21 @@ def _render_local_workload_compose(
                     f"${{{auth_token_env}:?set {auth_token_env}}}"
                 )
 
-        ports = []
-        for index, port_def in enumerate(spec.get("ports") or []):
-            if not isinstance(port_def, dict):
-                continue
-            port = port_def.get("port")
-            target = port_def.get("targetPort") or port
-            if port and target:
-                ports.append(f"{port}:{target}")
-        if ports:
-            service["ports"] = ports
+        labels = manifest.get("metadata", {}).get("labels", {})
+        is_demo_agent = isinstance(labels, dict) and (
+            labels.get("moiraweave.io/template") == "demo-agent"
+        )
+        if not is_demo_agent:
+            ports = []
+            for index, port_def in enumerate(spec.get("ports") or []):
+                if not isinstance(port_def, dict):
+                    continue
+                port = port_def.get("port")
+                target = port_def.get("targetPort") or port
+                if port and target:
+                    ports.append(f"{port}:{target}")
+            if ports:
+                service["ports"] = ports
 
         persistence = spec.get("persistence") or {}
         if isinstance(persistence, dict) and persistence.get("enabled"):
@@ -1249,6 +1787,32 @@ def run_artifacts(
     console.print(Syntax(json.dumps(response.get("data", response), indent=2), "json"))
 
 
+@app.command()
+def doctor(
+    target: str = typer.Option(
+        "local",
+        "--target",
+        help="Deployment target to diagnose. Currently supports local.",
+    ),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print a machine-readable report.",
+    ),
+) -> None:
+    """Diagnose local onboarding blockers before starting MoiraWeave."""
+    if target != "local":
+        _exit_with_error("Only --target local is supported by doctor today.")
+    report = _doctor_report(target=target, api_url=api_url)
+    if json_output:
+        console.print(json.dumps(report, indent=2))
+    else:
+        _print_doctor_report(report)
+    if _doctor_has_errors(report):
+        raise typer.Exit(code=1)
+
+
 @agent_session_app.command("create")
 def agent_session_create(
     agent: str = typer.Argument(..., help="Agent workload name."),
@@ -1535,6 +2099,11 @@ def up(
         "--register/--no-register",
         help="Register workloads and deployment records after startup.",
     ),
+    skip_doctor: bool = typer.Option(
+        False,
+        "--skip-doctor",
+        help="Skip local diagnostics before Docker starts.",
+    ),
 ) -> None:
     """Initialize, start, and register a local MoiraWeave stack."""
     try:
@@ -1575,17 +2144,6 @@ def up(
             )
         manifests = _load_workload_manifests(repo_root)
 
-    missing_env = _missing_required_env(manifests, repo_root)
-    if missing_env:
-        _exit_with_error(
-            "Missing required environment variables: " + ", ".join(missing_env),
-            hint=(
-                "Add them to .env or export them before running `moira up`. "
-                "Run `moira secrets list` to inspect required names, or use "
-                "`moira up --agent demo-agent` for a no-secret first run."
-            ),
-        )
-
     deploy_root = _deploy_root(repo_root)
     deploy_root.mkdir(parents=True, exist_ok=True)
     output = deploy_root / "docker-compose.workloads.yml"
@@ -1597,6 +2155,18 @@ def up(
         encoding="utf-8",
     )
     ui.success(f"Generated {output.relative_to(repo_root)}")
+
+    if not skip_doctor:
+        report = _doctor_report(target="local", api_url=api_url, repo_root=repo_root)
+        _print_doctor_report(report)
+        if _doctor_has_errors(report):
+            _exit_with_error(
+                "Local diagnostics failed; Docker was not started.",
+                hint=(
+                    "Fix the ERROR checks above, or rerun with --skip-doctor "
+                    "if you know the stack is safe."
+                ),
+            )
 
     ui.info("Starting local platform, UI, and workload services...")
     compose_output = _run_command(
@@ -1640,12 +2210,22 @@ def up(
                 "Set MOIRA_TOKEN or run `moira deploy local --register`."
             )
 
+    chat_agent = _first_agent_workload_name(manifests)
     ui.next_steps(
         "MoiraWeave is up",
         [
             (1, "open http://localhost:3000/agents", "Open the agent console"),
             (2, "sign in as admin / demo-password", "Use local dev credentials"),
-            (3, "New Session", "Chat with the selected agent"),
+            (
+                3,
+                f'moira agent chat {chat_agent} "hello from the CLI" --watch',
+                "Run a terminal smoke test",
+            ),
+            (
+                4,
+                "docker compose logs api-gateway worker",
+                "Inspect platform logs if anything looks unhealthy",
+            ),
         ],
     )
 
