@@ -44,6 +44,10 @@ For development or private registries, override platform images in `.env`:
 `MOIRAWEAVE_API_GATEWAY_IMAGE`, `MOIRAWEAVE_WORKER_IMAGE`, and
 `MOIRAWEAVE_UI_IMAGE`.
 
+Official platform images are built and pushed by GitHub Actions. For a clean
+first run without `docker login ghcr.io`, the GHCR packages must also be public:
+`moiraweave/api-gateway`, `moiraweave/worker`, and `moiraweave-ui`.
+
 Start from another agent template when you want the first run to be a real
 runtime instead of the demo:
 
