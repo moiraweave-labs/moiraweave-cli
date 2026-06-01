@@ -72,6 +72,12 @@ class TestInitWorkflow:
         assert "MOIRAWEAVE_WORKER_IMAGE=" in env_text
         assert "MOIRAWEAVE_UI_IMAGE=" in env_text
 
+    def test_generated_gitignore_excludes_local_state(self, workspace: Path) -> None:
+        gitignore = (workspace / ".gitignore").read_text()
+        assert ".moiraweave/auth.json" in gitignore
+        assert ".moiraweave/artifacts/*" in gitignore
+        assert "!.moiraweave/artifacts/.gitkeep" in gitignore
+
 
 @pytest.mark.integration
 class TestWorkloadScaffolding:

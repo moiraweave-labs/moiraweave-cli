@@ -90,25 +90,36 @@ def scaffold_workspace_structure(repo_root: Path) -> None:
         d.mkdir(parents=True, exist_ok=True)
         (d / ".gitkeep").touch()
 
-    # Create .gitignore if it doesn't exist
+    # Create or update .gitignore with local-only workspace state.
     gitignore_path = repo_root / ".gitignore"
-    if not gitignore_path.exists():
-        gitignore_content = """.env
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.DS_Store
-.idea/
-.vscode/
-*.egg-info/
-dist/
-build/
-.pytest_cache/
-.mypy_cache/
-"""
-        gitignore_path.write_text(gitignore_content, encoding="utf-8")
+    gitignore_entries = [
+        ".env",
+        ".venv/",
+        "__pycache__/",
+        "*.pyc",
+        "*.pyo",
+        "*.pyd",
+        ".DS_Store",
+        ".idea/",
+        ".vscode/",
+        "*.egg-info/",
+        "dist/",
+        "build/",
+        ".pytest_cache/",
+        ".mypy_cache/",
+        ".moiraweave/auth.json",
+        ".moiraweave/artifacts/*",
+        "!.moiraweave/artifacts/.gitkeep",
+    ]
+    existing_lines = (
+        gitignore_path.read_text(encoding="utf-8").splitlines()
+        if gitignore_path.exists()
+        else []
+    )
+    missing_lines = [line for line in gitignore_entries if line not in existing_lines]
+    if missing_lines:
+        content = "\n".join([*existing_lines, *missing_lines]).strip() + "\n"
+        gitignore_path.write_text(content, encoding="utf-8")
 
     # Create deploy values files
     for env in ["local", "dev", "prod"]:
