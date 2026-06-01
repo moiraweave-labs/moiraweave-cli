@@ -1256,12 +1256,36 @@ def agent_session_create(
     api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
 ) -> None:
     """Create an agent session."""
-    response = _request_json(
+    response = _create_agent_session(agent, metadata=metadata, api_url=api_url)
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+
+
+def _create_agent_session(
+    agent: str,
+    *,
+    metadata: str,
+    api_url: str,
+) -> dict[str, Any]:
+    return _request_json(
         "POST",
         f"{api_url}/v1/agents/{agent}/sessions",
         {"metadata": _parse_json_input(metadata)},
     )
-    console.print(Syntax(json.dumps(response, indent=2), "json"))
+
+
+def _send_agent_session_message(
+    agent: str,
+    session_id: str,
+    message: str,
+    *,
+    context: str,
+    api_url: str,
+) -> dict[str, Any]:
+    return _request_json(
+        "POST",
+        f"{api_url}/v1/agents/{agent}/sessions/{session_id}/messages",
+        {"message": message, "context": _parse_json_input(context)},
+    )
 
 
 @agent_session_app.command("message")
@@ -1274,10 +1298,57 @@ def agent_session_message(
     api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
 ) -> None:
     """Send a message to an agent session."""
-    response = _request_json(
-        "POST",
-        f"{api_url}/v1/agents/{agent}/sessions/{session_id}/messages",
-        {"message": message, "context": _parse_json_input(context)},
+    response = _send_agent_session_message(
+        agent,
+        session_id,
+        message,
+        context=context,
+        api_url=api_url,
+    )
+    console.print(Syntax(json.dumps(response, indent=2), "json"))
+    run_id = str(response.get("run_id", ""))
+    if watch and run_id:
+        _watch_run(run_id, api_url, timeout=3600)
+
+
+@agent_app.command("chat")
+def agent_chat(
+    agent: str = typer.Argument(..., help="Agent workload name."),
+    message: str = typer.Argument(..., help="Message text."),
+    session_id: str | None = typer.Option(
+        None,
+        "--session-id",
+        "-s",
+        help="Existing session id. A new session is created when omitted.",
+    ),
+    metadata: str = typer.Option(
+        "{}",
+        "--metadata",
+        help="Metadata JSON for a new session.",
+    ),
+    context: str = typer.Option("{}", "--context", help="Message context JSON."),
+    watch: bool = typer.Option(False, "--watch", help="Watch the associated run."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Create a session if needed, send one message, and print the response."""
+    active_session_id = session_id
+    if not active_session_id:
+        session = _create_agent_session(agent, metadata=metadata, api_url=api_url)
+        raw_session_id = session.get("session_id")
+        if not raw_session_id:
+            _exit_with_error(
+                "Agent session creation did not return a session_id",
+                hint="Check the API gateway logs and agent workload name.",
+            )
+        active_session_id = str(raw_session_id)
+        ui.success(f"Created session {active_session_id}")
+
+    response = _send_agent_session_message(
+        agent,
+        active_session_id,
+        message,
+        context=context,
+        api_url=api_url,
     )
     console.print(Syntax(json.dumps(response, indent=2), "json"))
     run_id = str(response.get("run_id", ""))

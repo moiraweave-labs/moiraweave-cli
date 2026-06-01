@@ -152,3 +152,92 @@ def test_render_compose_injects_agent_auth_token_env(tmp_path: Path) -> None:
 
     env = compose["services"]["generic-agent"]["environment"]
     assert env["AGENT_TOKEN"] == "${AGENT_TOKEN:?set AGENT_TOKEN}"
+
+
+def test_agent_chat_creates_session_and_sends_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A one-shot chat creates a session before sending the first message."""
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    def fake_request_json(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None = None,
+        token: str | None = None,
+    ) -> dict[str, object]:
+        del token
+        calls.append((method, url, payload))
+        if url.endswith("/v1/agents/demo-agent/sessions"):
+            return {"session_id": "session-1"}
+        if url.endswith("/v1/agents/demo-agent/sessions/session-1/messages"):
+            return {"run_id": "run-1", "session_id": "session-1"}
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(MAIN_MODULE, "_request_json", fake_request_json)
+
+    MAIN_MODULE.agent_chat(
+        "demo-agent",
+        "hello",
+        session_id=None,
+        metadata='{"source": "test"}',
+        context='{"channel": "cli"}',
+        watch=False,
+        api_url="http://api.test",
+    )
+
+    assert calls == [
+        (
+            "POST",
+            "http://api.test/v1/agents/demo-agent/sessions",
+            {"metadata": {"source": "test"}},
+        ),
+        (
+            "POST",
+            "http://api.test/v1/agents/demo-agent/sessions/session-1/messages",
+            {"message": "hello", "context": {"channel": "cli"}},
+        ),
+    ]
+
+
+def test_agent_chat_uses_existing_session_and_can_watch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing --session-id avoids session creation and can watch the run."""
+    watched: list[tuple[str, str, int]] = []
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    def fake_request_json(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None = None,
+        token: str | None = None,
+    ) -> dict[str, object]:
+        del token
+        calls.append((method, url, payload))
+        return {"run_id": "run-2", "session_id": "existing-session"}
+
+    def fake_watch_run(run_id: str, api_url: str, timeout: int) -> None:
+        watched.append((run_id, api_url, timeout))
+
+    monkeypatch.setattr(MAIN_MODULE, "_request_json", fake_request_json)
+    monkeypatch.setattr(MAIN_MODULE, "_watch_run", fake_watch_run)
+
+    MAIN_MODULE.agent_chat(
+        "demo-agent",
+        "hello again",
+        session_id="existing-session",
+        metadata="{}",
+        context="{}",
+        watch=True,
+        api_url="http://api.test",
+    )
+
+    assert calls == [
+        (
+            "POST",
+            "http://api.test/v1/agents/demo-agent/sessions/existing-session/messages",
+            {"message": "hello again", "context": {}},
+        )
+    ]
+    assert watched == [("run-2", "http://api.test", 3600)]

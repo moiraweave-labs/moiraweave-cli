@@ -29,6 +29,13 @@ Open `http://localhost:3000/agents` after sign-in to land directly in the
 agent console; the first agent and any existing session are selected
 automatically.
 
+For a terminal-only smoke test, send one message without manually creating a
+session first:
+
+```bash
+moira agent chat demo-agent "hello from the CLI" --watch
+```
+
 Start from another agent template when you want the first run to be a real
 runtime instead of the demo:
 
@@ -49,6 +56,7 @@ for a no-secret first run.
 - `moira demo agent`: create a no-secret mock agent workload.
 - `moira workload new|list|show|deploy|status|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
+- `moira agent chat`: create a session if needed and send one message.
 - `moira agent session create|message|history`: interact with agent sessions.
 - `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.
 - `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
