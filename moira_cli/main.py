@@ -176,7 +176,11 @@ def _parse_key_value_options(values: list[str], *, option: str) -> dict[str, str
 
 
 def _request_json(
-    method: str, url: str, payload: dict[str, Any] | None = None
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    retry_local_login: bool = True,
 ) -> dict[str, Any]:
     """Issue an HTTP request and parse JSON response.
 
@@ -189,11 +193,29 @@ def _request_json(
     :returns: Parsed JSON dictionary.
     :raises typer.Exit: If request fails.
     """
-    token = os.environ.get("MOIRA_TOKEN")
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    repo_root = _maybe_repo_root()
+    headers = _request_headers(repo_root)
     try:
         with httpx.Client(timeout=15.0) as client:
             response = client.request(method, url, json=payload, headers=headers)
+            if (
+                response.status_code == 401
+                and retry_local_login
+                and "MOIRA_TOKEN" not in os.environ
+                and repo_root is not None
+                and _is_local_api_url(url)
+            ):
+                parsed = urlparse(url)
+                api_url = f"{parsed.scheme}://{parsed.netloc}"
+                token = _dev_login_token(api_url)
+                if token:
+                    _store_cli_token(repo_root, api_url, token)
+                    response = client.request(
+                        method,
+                        url,
+                        json=payload,
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
             response.raise_for_status()
             body = response.json()
             return body if isinstance(body, dict) else {"data": body}
@@ -248,6 +270,58 @@ def _deploy_root(repo_root: pathlib.Path) -> pathlib.Path:
         return repo_root / config.deploy_dir
     except Exception:
         return repo_root / ".moiraweave" / "deploy"
+
+
+def _auth_token_path(repo_root: pathlib.Path) -> pathlib.Path:
+    return repo_root / ".moiraweave" / "auth.json"
+
+
+def _maybe_repo_root() -> pathlib.Path | None:
+    try:
+        return find_repo_root()
+    except FileNotFoundError:
+        return None
+
+
+def _is_local_api_url(api_url: str) -> bool:
+    host = urlparse(api_url).hostname
+    return host in {None, "", "localhost", "127.0.0.1", "::1"}
+
+
+def _stored_cli_token(repo_root: pathlib.Path | None) -> str | None:
+    if repo_root is None:
+        return None
+    path = _auth_token_path(repo_root)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    token = payload.get("access_token") if isinstance(payload, dict) else None
+    return str(token) if token else None
+
+
+def _store_cli_token(repo_root: pathlib.Path, api_url: str, token: str) -> None:
+    path = _auth_token_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "api_url": api_url.rstrip("/"),
+                "access_token": token,
+                "source": "dev-login",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _request_headers(repo_root: pathlib.Path | None) -> dict[str, str]:
+    token = os.environ.get("MOIRA_TOKEN") or _stored_cli_token(repo_root)
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _workload_file(repo_root: pathlib.Path, name: str) -> pathlib.Path:
@@ -2224,6 +2298,7 @@ def up(
         previous_token = os.environ.get("MOIRA_TOKEN")
         token = previous_token or _dev_login_token(api_url)
         if token:
+            _store_cli_token(repo_root, api_url, token)
             os.environ["MOIRA_TOKEN"] = token
             _register_workload_deployments(
                 manifests,
@@ -2240,14 +2315,16 @@ def up(
             )
 
     chat_agent = _first_agent_workload_name(manifests)
+    ui_port = _env_int(repo_root, "MOIRAWEAVE_UI_PORT", 3000)
+    api_suffix = "" if api_url == DEFAULT_API_URL else f" --api-url {api_url}"
     ui.next_steps(
         "MoiraWeave is up",
         [
-            (1, "open http://localhost:3000/agents", "Open the agent console"),
+            (1, f"open http://localhost:{ui_port}/agents", "Open the agent console"),
             (2, "sign in as admin / demo-password", "Use local dev credentials"),
             (
                 3,
-                f'moira agent chat {chat_agent} "hello from the CLI" --watch',
+                f'moira agent chat {chat_agent} "hello from the CLI" --watch{api_suffix}',
                 "Run a terminal smoke test",
             ),
             (

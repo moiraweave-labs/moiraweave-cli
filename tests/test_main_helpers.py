@@ -365,3 +365,59 @@ def test_agent_chat_uses_existing_session_and_can_watch(
         )
     ]
     assert watched == [("run-2", "http://api.test", 3600)]
+
+
+def test_request_json_refreshes_local_dev_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local API calls transparently refresh and persist a dev token after 401."""
+    _write_workspace(tmp_path)
+    requests: list[dict[str, str]] = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:  # pragma: no cover - retry should avoid it
+                raise AssertionError("unexpected unrecovered response")
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            del timeout
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def request(
+            self,
+            method: str,
+            url: str,
+            json: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> FakeResponse:
+            del method, url, json
+            requests.append(headers or {})
+            if len(requests) == 1:
+                return FakeResponse(401, {})
+            return FakeResponse(200, {"ok": True})
+
+    monkeypatch.delenv("MOIRA_TOKEN", raising=False)
+    monkeypatch.setattr(MAIN_MODULE, "find_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(MAIN_MODULE, "_dev_login_token", lambda _api_url: "fresh-token")
+    monkeypatch.setattr(MAIN_MODULE.httpx, "Client", FakeClient)
+
+    response = MAIN_MODULE._request_json("GET", "http://localhost:8100/v1/runs")
+
+    assert response == {"ok": True}
+    assert requests == [{}, {"Authorization": "Bearer fresh-token"}]
+    stored = json.loads((tmp_path / ".moiraweave" / "auth.json").read_text())
+    assert stored["access_token"] == "fresh-token"
