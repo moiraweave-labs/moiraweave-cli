@@ -303,6 +303,7 @@ def _stored_cli_token(repo_root: pathlib.Path | None) -> str | None:
 
 
 def _store_cli_token(repo_root: pathlib.Path, api_url: str, token: str) -> None:
+    _ensure_gitignore_entries(repo_root, [".moiraweave/auth.json"])
     path = _auth_token_path(repo_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -317,6 +318,14 @@ def _store_cli_token(repo_root: pathlib.Path, api_url: str, token: str) -> None:
         + "\n",
         encoding="utf-8",
     )
+
+
+def _ensure_gitignore_entries(repo_root: pathlib.Path, entries: list[str]) -> None:
+    path = repo_root / ".gitignore"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    missing = [entry for entry in entries if entry not in lines]
+    if missing:
+        path.write_text("\n".join([*lines, *missing]).strip() + "\n", encoding="utf-8")
 
 
 def _request_headers(repo_root: pathlib.Path | None) -> dict[str, str]:

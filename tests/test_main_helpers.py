@@ -421,3 +421,4 @@ def test_request_json_refreshes_local_dev_token(
     assert requests == [{}, {"Authorization": "Bearer fresh-token"}]
     stored = json.loads((tmp_path / ".moiraweave" / "auth.json").read_text())
     assert stored["access_token"] == "fresh-token"
+    assert ".moiraweave/auth.json" in (tmp_path / ".gitignore").read_text()
