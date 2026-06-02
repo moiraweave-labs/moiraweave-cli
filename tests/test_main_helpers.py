@@ -20,6 +20,7 @@ SPEC.loader.exec_module(MAIN_MODULE)
 _agent_template_manifest = MAIN_MODULE._agent_template_manifest
 _doctor_has_errors = MAIN_MODULE._doctor_has_errors
 _doctor_report = MAIN_MODULE._doctor_report
+_docker_image_available = MAIN_MODULE._docker_image_available
 _missing_required_env = MAIN_MODULE._missing_required_env
 _parse_json_input = MAIN_MODULE._parse_json_input
 _ready_response_status = MAIN_MODULE._ready_response_status
@@ -278,6 +279,31 @@ services:
     )
     assert port_check["status"] == "error"
     assert port_check["metadata"]["duplicates"] == [8000]
+
+
+def test_docker_image_available_retries_remote_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transient registry failures should not block first-run onboarding."""
+    remote_attempts = 0
+
+    def fake_probe(command: list[str], **_kwargs: object) -> tuple[bool, str]:
+        nonlocal remote_attempts
+        if command[:3] == ["docker", "image", "inspect"]:
+            return False, "not local"
+        remote_attempts += 1
+        if remote_attempts == 1:
+            return False, "temporary registry error"
+        return True, "remote ok"
+
+    monkeypatch.setattr(MAIN_MODULE, "_probe_command", fake_probe)
+    monkeypatch.setattr(MAIN_MODULE.time, "sleep", lambda _seconds: None)
+
+    available, message = _docker_image_available("example/image:latest", attempts=2)
+
+    assert available is True
+    assert "available remotely" in message
+    assert remote_attempts == 2
 
 
 def test_ready_response_status_requires_ready_body() -> None:

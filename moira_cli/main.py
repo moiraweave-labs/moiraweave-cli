@@ -895,19 +895,23 @@ def _compose_images(path: pathlib.Path, repo_root: pathlib.Path) -> list[str]:
     return images
 
 
-def _docker_image_available(image: str) -> tuple[bool, str]:
+def _docker_image_available(image: str, *, attempts: int = 3) -> tuple[bool, str]:
     local_ok, local_output = _probe_command(
         ["docker", "image", "inspect", image],
         timeout=3.0,
     )
     if local_ok:
         return True, f"{image} is present locally."
-    remote_ok, remote_output = _probe_command(
-        ["docker", "manifest", "inspect", image],
-        timeout=10.0,
-    )
-    if remote_ok:
-        return True, f"{image} is available remotely."
+    remote_output = ""
+    for attempt in range(max(attempts, 1)):
+        remote_ok, remote_output = _probe_command(
+            ["docker", "manifest", "inspect", image],
+            timeout=10.0,
+        )
+        if remote_ok:
+            return True, f"{image} is available remotely."
+        if attempt < attempts - 1:
+            time.sleep(0.5)
     return False, remote_output or local_output or "image is not available"
 
 
@@ -1133,11 +1137,18 @@ def _doctor_report(
                 image_ok, image_message = _docker_image_available(image)
                 if not image_ok:
                     unavailable[image] = image_message
+            unavailable_images = sorted(unavailable)
+            unavailable_summary = ", ".join(unavailable_images[:3])
+            if len(unavailable_images) > 3:
+                unavailable_summary += f", +{len(unavailable_images) - 3} more"
             checks.append(
                 _doctor_check(
                     "container-images",
                     "error" if unavailable else "ok",
-                    f"{len(unavailable)} container image(s) are not accessible."
+                    (
+                        f"{len(unavailable)} container image(s) are not accessible: "
+                        f"{unavailable_summary}."
+                    )
                     if unavailable
                     else f"{len(images)} container image(s) are locally present or pullable.",
                     "Publish/login to the registry or override MOIRAWEAVE_*_IMAGE in .env."
