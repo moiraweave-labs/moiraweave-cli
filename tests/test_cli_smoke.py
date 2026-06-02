@@ -351,10 +351,12 @@ class TestCLIDeployRegistration:
             manifests: list[dict[str, object]],
             *,
             target: str,
+            env: str,
             status: str,
             api_url: str,
         ) -> None:
             assert target == "local"
+            assert env == "local"
             assert status == "running"
             assert api_url == "http://api:8000"
             registered.extend(manifests)
@@ -421,6 +423,7 @@ class TestCLIDeployRegistration:
         cli_main._register_workload_deployments(
             [manifest],
             target="local",
+            env="local",
             status="running",
             api_url="http://api:8000",
         )
@@ -434,11 +437,13 @@ class TestCLIDeployRegistration:
         assert calls[1][1] == "http://api:8000/v1/workloads/hermes/deployments"
         assert calls[1][2] is not None
         assert calls[1][2]["target"] == "local"
+        assert calls[1][2]["env"] == "local"
         assert calls[1][2]["status"] == "running"
         assert calls[1][2]["endpoint"] == "http://hermes:8642"
         metadata = calls[1][2]["metadata"]
         assert isinstance(metadata, dict)
         assert metadata["service_name"] == "hermes"
+        assert metadata["environment"] == "local"
 
     def test_register_workload_deployments_records_external_agents(
         self, monkeypatch: pytest.MonkeyPatch
@@ -469,6 +474,7 @@ class TestCLIDeployRegistration:
         cli_main._register_workload_deployments(
             [manifest],
             target="local",
+            env="local",
             status="running",
             api_url="http://api:8000",
         )
@@ -478,4 +484,5 @@ class TestCLIDeployRegistration:
         )
         assert calls[1][2] is not None
         assert calls[1][2]["target"] == "external"
+        assert calls[1][2]["env"] == "local"
         assert calls[1][2]["endpoint"] == "https://agents.example.com/hermes"

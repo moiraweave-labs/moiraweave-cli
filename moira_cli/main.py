@@ -1460,6 +1460,7 @@ def _register_workload_deployments(
     manifests: list[dict[str, Any]],
     *,
     target: str,
+    env: str,
     status: str,
     api_url: str,
 ) -> None:
@@ -1475,11 +1476,13 @@ def _register_workload_deployments(
             f"{api_url}/v1/workloads/{name}/deployments",
             {
                 "target": record_target,
+                "env": env,
                 "status": status,
                 "endpoint": _deployment_endpoint(manifest),
                 "metadata": {
                     "service_name": _deployment_service_name(manifest),
                     "deployment_mode": _deployment_mode(manifest),
+                    "environment": env,
                     "source": "moira-cli",
                 },
             },
@@ -2137,6 +2140,7 @@ def deploy_local(
         _register_workload_deployments(
             manifests,
             target="local",
+            env="local",
             status="running" if up else "generated",
             api_url=api_url,
         )
@@ -2189,6 +2193,7 @@ def deploy_k8s(
         _register_workload_deployments(
             manifests,
             target="kubernetes",
+            env=env,
             status="applied" if apply else "generated",
             api_url=api_url,
         )
@@ -2343,6 +2348,7 @@ def up(
             _register_workload_deployments(
                 manifests,
                 target="local",
+                env="local",
                 status="running",
                 api_url=api_url,
             )
