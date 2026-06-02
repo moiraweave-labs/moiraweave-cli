@@ -769,11 +769,41 @@ def _api_ready(api_url: str) -> tuple[bool, str]:
     try:
         with httpx.Client(timeout=2.0) as client:
             response = client.get(f"{api_url.rstrip('/')}/ready")
-        if response.status_code < 500:
-            return True, f"ready endpoint returned HTTP {response.status_code}"
-        return False, f"ready endpoint returned HTTP {response.status_code}"
+        return _ready_response_status(response)
     except httpx.HTTPError as exc:
         return False, str(exc)
+
+
+def _ready_response_status(response: httpx.Response) -> tuple[bool, str]:
+    if response.status_code >= 500:
+        return False, f"ready endpoint returned HTTP {response.status_code}"
+    try:
+        body = response.json()
+    except ValueError:
+        return True, f"ready endpoint returned HTTP {response.status_code}"
+    if not isinstance(body, dict):
+        return True, f"ready endpoint returned HTTP {response.status_code}"
+
+    status = str(body.get("status") or "")
+    if status == "ready":
+        return True, "ready endpoint status ready"
+    if status:
+        return False, f"ready endpoint status {status}{_ready_check_summary(body)}"
+    return True, f"ready endpoint returned HTTP {response.status_code}"
+
+
+def _ready_check_summary(body: dict[str, Any]) -> str:
+    checks = body.get("checks")
+    if not isinstance(checks, dict):
+        return ""
+    degraded: list[str] = []
+    for name, raw_check in checks.items():
+        if not isinstance(raw_check, dict):
+            continue
+        check_status = raw_check.get("status")
+        if check_status and check_status != "ok":
+            degraded.append(f"{name}={check_status}")
+    return f" ({', '.join(degraded)})" if degraded else ""
 
 
 def _url_reachable(url: str) -> tuple[bool, str]:
@@ -1464,7 +1494,8 @@ def _wait_for_api_ready(api_url: str, timeout_seconds: int) -> bool:
         try:
             with httpx.Client(timeout=2.0) as client:
                 response = client.get(f"{api_url.rstrip('/')}/ready")
-            if response.status_code < 500:
+            ready, _message = _ready_response_status(response)
+            if ready:
                 return True
         except httpx.HTTPError:
             time.sleep(1)

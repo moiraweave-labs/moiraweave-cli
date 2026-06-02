@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 import typer
 
@@ -21,6 +22,7 @@ _doctor_has_errors = MAIN_MODULE._doctor_has_errors
 _doctor_report = MAIN_MODULE._doctor_report
 _missing_required_env = MAIN_MODULE._missing_required_env
 _parse_json_input = MAIN_MODULE._parse_json_input
+_ready_response_status = MAIN_MODULE._ready_response_status
 _render_local_workload_compose = MAIN_MODULE._render_local_workload_compose
 _secret_inventory = MAIN_MODULE._secret_inventory
 
@@ -276,6 +278,34 @@ services:
     )
     assert port_check["status"] == "error"
     assert port_check["metadata"]["duplicates"] == [8000]
+
+
+def test_ready_response_status_requires_ready_body() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "status": "not_ready",
+            "checks": {
+                "redis": {"status": "ok"},
+                "run_queue": {"status": "degraded"},
+            },
+        },
+    )
+
+    ready, message = _ready_response_status(response)
+
+    assert ready is False
+    assert "not_ready" in message
+    assert "run_queue=degraded" in message
+
+
+def test_ready_response_status_accepts_ready_body() -> None:
+    response = httpx.Response(200, json={"status": "ready", "checks": {}})
+
+    ready, message = _ready_response_status(response)
+
+    assert ready is True
+    assert message == "ready endpoint status ready"
 
 
 def test_agent_chat_creates_session_and_sends_message(
