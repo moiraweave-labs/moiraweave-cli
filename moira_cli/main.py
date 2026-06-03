@@ -1342,9 +1342,7 @@ def _doctor_report(
             transient_summary = ", ".join(transient_images[:3])
             if len(transient_images) > 3:
                 transient_summary += f", +{len(transient_images) - 3} more"
-            image_status = (
-                "error" if unavailable else "warning" if transient else "ok"
-            )
+            image_status = "error" if unavailable else "warning" if transient else "ok"
             if unavailable:
                 image_message = (
                     f"{len(unavailable)} container image(s) are not accessible: "
