@@ -26,8 +26,8 @@ moira agent chat demo-agent "hello from the CLI" --watch
 `moira up` initializes the workspace if needed, creates a no-secret demo agent
 when there are no workloads, writes a local `docker-compose.yml` with the Ops
 dashboard enabled, generates workload Compose services, runs `moira doctor`,
-starts API, worker, storage, UI, and workloads, waits for readiness, and
-registers local deployment records. The dashboard is available at
+starts API, worker, storage, UI, and workloads, waits for API and UI readiness,
+and registers local deployment records. The dashboard is available at
 `http://localhost:3000`.
 Open `http://localhost:3000/agents` after sign-in to land directly in the
 agent console; the first agent and any existing session are selected
@@ -59,7 +59,10 @@ moira up --agent external-agent --agent-endpoint https://agent.example.com
 
 Hermes/OpenClaw templates validate required secrets before Docker starts. Add
 them to `.env` or export them in the shell. Use `moira up --agent demo-agent`
-for a no-secret first run.
+for a no-secret first run. Their web search, browser, terminal, MCP, memory,
+and native channel tools stay inside the agent runtime; MoiraWeave only prepares
+the declared deployment boundary and observes health, runs, events, and
+artifacts through the adapter.
 
 ## Command Surface
 
