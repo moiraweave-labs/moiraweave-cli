@@ -26,6 +26,7 @@ _parse_json_input = MAIN_MODULE._parse_json_input
 _ready_response_status = MAIN_MODULE._ready_response_status
 _render_local_workload_compose = MAIN_MODULE._render_local_workload_compose
 _secret_inventory = MAIN_MODULE._secret_inventory
+_wait_for_url_reachable = MAIN_MODULE._wait_for_url_reachable
 
 
 def _write_workspace(tmp_path: Path) -> Path:
@@ -336,6 +337,28 @@ def test_docker_image_available_retries_remote_manifest(
     assert available is True
     assert "available remotely" in message
     assert remote_attempts == 2
+
+
+def test_wait_for_url_reachable_retries_until_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def fake_url_reachable(_url: str) -> tuple[bool, str]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return False, "connection refused"
+        return True, "HTTP 200"
+
+    monkeypatch.setattr(MAIN_MODULE, "_url_reachable", fake_url_reachable)
+    monkeypatch.setattr(MAIN_MODULE.time, "sleep", lambda _seconds: None)
+
+    reachable, message = _wait_for_url_reachable("http://localhost:3000", 5)
+
+    assert reachable is True
+    assert message == "HTTP 200"
+    assert attempts == 2
 
 
 def test_ready_response_status_requires_ready_body() -> None:

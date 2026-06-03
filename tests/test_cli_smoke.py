@@ -351,6 +351,7 @@ class TestCLIDeployRegistration:
     ) -> None:
         commands: list[list[str]] = []
         registered: list[dict[str, object]] = []
+        ui_waits: list[tuple[str, int]] = []
 
         def fake_run(command: list[str], cwd: Path | None = None) -> str:
             del cwd
@@ -374,12 +375,18 @@ class TestCLIDeployRegistration:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(cli_main, "_run_command", fake_run)
         monkeypatch.setattr(cli_main, "_wait_for_api_ready", lambda *_args: True)
+        monkeypatch.setattr(
+            cli_main,
+            "_wait_for_url_reachable",
+            lambda url, timeout: ui_waits.append((url, timeout)) or (True, "HTTP 200"),
+        )
         monkeypatch.setattr(cli_main, "_dev_login_token", lambda _api_url: "token")
         monkeypatch.setattr(cli_main, "_register_workload_deployments", fake_register)
 
         cli_main.up(
             api_url="http://api:8000",
             wait_timeout=1,
+            ui_wait_timeout=2,
             demo_agent=True,
             register=True,
             skip_doctor=True,
@@ -396,6 +403,7 @@ class TestCLIDeployRegistration:
             "docker-compose.yml",
             "-f",
         ]
+        assert ui_waits == [("http://localhost:3000/agents", 2)]
         assert registered[0]["metadata"]["name"] == "demo-agent"
 
     def test_register_workload_deployments_posts_manifest_and_deployment(

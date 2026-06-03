@@ -1632,6 +1632,17 @@ def _wait_for_api_ready(api_url: str, timeout_seconds: int) -> bool:
     return False
 
 
+def _wait_for_url_reachable(url: str, timeout_seconds: int) -> tuple[bool, str]:
+    deadline = time.monotonic() + timeout_seconds
+    last_message = "not checked"
+    while time.monotonic() < deadline:
+        reachable, last_message = _url_reachable(url)
+        if reachable:
+            return True, last_message
+        time.sleep(1)
+    return False, last_message
+
+
 def _dev_login_token(api_url: str) -> str | None:
     username = os.environ.get("DEMO_USERNAME", "admin")
     password = os.environ.get("DEMO_PASSWORD", "demo-password")
@@ -2345,6 +2356,12 @@ def up(
         min=1,
         help="Seconds to wait for the API gateway.",
     ),
+    ui_wait_timeout: int = typer.Option(
+        45,
+        "--ui-wait-timeout",
+        min=0,
+        help="Seconds to wait for the local UI; 0 disables this check.",
+    ),
     demo_agent: bool = typer.Option(
         True,
         "--demo-agent/--no-demo-agent",
@@ -2476,6 +2493,18 @@ def up(
             hint="Run `docker compose logs api-gateway worker`.",
         )
 
+    ui_port = _env_int(repo_root, "MOIRAWEAVE_UI_PORT", 3000)
+    ui_url = f"http://localhost:{ui_port}/agents"
+    if ui_wait_timeout > 0:
+        ui_ready, ui_message = _wait_for_url_reachable(ui_url, ui_wait_timeout)
+        if ui_ready:
+            ui.success(f"UI is reachable at {ui_url} ({ui_message})")
+        else:
+            ui.warning(
+                f"UI did not respond within {ui_wait_timeout}s ({ui_message}). "
+                "The stack is still running; inspect `docker compose logs ui`."
+            )
+
     if register:
         previous_token = os.environ.get("MOIRA_TOKEN")
         token = previous_token or _dev_login_token(api_url)
@@ -2498,7 +2527,6 @@ def up(
             )
 
     chat_agent = _first_agent_workload_name(manifests)
-    ui_port = _env_int(repo_root, "MOIRAWEAVE_UI_PORT", 3000)
     api_suffix = "" if api_url == DEFAULT_API_URL else f" --api-url {api_url}"
     ui.next_steps(
         "MoiraWeave is up",
