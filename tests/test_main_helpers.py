@@ -140,7 +140,9 @@ def test_agent_template_manifest_for_openclaw() -> None:
     assert manifest["spec"]["agent"]["adapter"] == "openclaw"
     assert manifest["spec"]["agent"]["authTokenEnv"] == "OPENCLAW_GATEWAY_TOKEN"
     assert manifest["spec"]["agent"]["toolOwnership"] == "runtime"
-    assert manifest["spec"]["agent"]["runtimeRequirements"]["messaging"]["enabled"] is True
+    assert (
+        manifest["spec"]["agent"]["runtimeRequirements"]["messaging"]["enabled"] is True
+    )
 
 
 def test_agent_template_manifest_for_external_agent_requires_endpoint() -> None:
