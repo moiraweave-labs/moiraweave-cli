@@ -39,6 +39,39 @@ _LOCAL_PLATFORM_PORTS = {
     "redis": ("REDIS_PORT", 6379),
     "qdrant": ("QDRANT_PORT", 6333),
 }
+_FATAL_IMAGE_ERROR_MARKERS = (
+    "authentication required",
+    "denied",
+    "insufficient_scope",
+    "invalid reference format",
+    "manifest unknown",
+    "name unknown",
+    "no such manifest",
+    "not found",
+    "pull access denied",
+    "repository does not exist",
+    "requested access to the resource is denied",
+    "unauthorized",
+)
+_TRANSIENT_IMAGE_ERROR_MARKERS = (
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "connection refused",
+    "connection reset",
+    "context deadline exceeded",
+    "dial tcp",
+    "i/o timeout",
+    "network is unreachable",
+    "service unavailable",
+    "temporary",
+    "timed out",
+    "timeout",
+    "tls handshake timeout",
+    "too many requests",
+)
 
 console = Console()
 ui = get_ui()
@@ -53,6 +86,17 @@ agent_session_app = typer.Typer(help="Create and message agent sessions")
 deploy_app = typer.Typer(help="Generate or apply deployment assets")
 demo_app = typer.Typer(help="Create runnable demo workloads")
 secrets_app = typer.Typer(help="Inspect required workload secrets")
+
+
+class DockerImageAvailability:
+    def __init__(self, image: str, status: str, message: str) -> None:
+        self.image = image
+        self.status = status
+        self.message = message
+
+    @property
+    def available(self) -> bool:
+        return self.status == "ok"
 
 
 # Register 'flow' command
@@ -1009,13 +1053,22 @@ def _compose_images(path: pathlib.Path, repo_root: pathlib.Path) -> list[str]:
     return images
 
 
-def _docker_image_available(image: str, *, attempts: int = 3) -> tuple[bool, str]:
+def _docker_image_availability(
+    image: str,
+    *,
+    attempts: int = 4,
+    delay_seconds: float = 1.0,
+) -> DockerImageAvailability:
     local_ok, local_output = _probe_command(
         ["docker", "image", "inspect", image],
         timeout=3.0,
     )
     if local_ok:
-        return True, f"{image} is present locally."
+        return DockerImageAvailability(
+            image=image,
+            status="ok",
+            message=f"{image} is present locally.",
+        )
     remote_output = ""
     for attempt in range(max(attempts, 1)):
         remote_ok, remote_output = _probe_command(
@@ -1023,10 +1076,35 @@ def _docker_image_available(image: str, *, attempts: int = 3) -> tuple[bool, str
             timeout=10.0,
         )
         if remote_ok:
-            return True, f"{image} is available remotely."
+            return DockerImageAvailability(
+                image=image,
+                status="ok",
+                message=f"{image} is available remotely.",
+            )
+        if _docker_image_failure_status(remote_output) == "error":
+            break
         if attempt < attempts - 1:
-            time.sleep(0.5)
-    return False, remote_output or local_output or "image is not available"
+            time.sleep(delay_seconds)
+    message = remote_output or local_output or "image is not available"
+    return DockerImageAvailability(
+        image=image,
+        status=_docker_image_failure_status(message),
+        message=message,
+    )
+
+
+def _docker_image_available(image: str, *, attempts: int = 4) -> tuple[bool, str]:
+    availability = _docker_image_availability(image, attempts=attempts)
+    return availability.available, availability.message
+
+
+def _docker_image_failure_status(message: str) -> str:
+    lowered = message.lower()
+    if any(marker in lowered for marker in _FATAL_IMAGE_ERROR_MARKERS):
+        return "error"
+    if any(marker in lowered for marker in _TRANSIENT_IMAGE_ERROR_MARKERS):
+        return "warning"
+    return "error"
 
 
 def _doctor_report(
@@ -1247,28 +1325,60 @@ def _doctor_report(
                 )
             )
             unavailable: dict[str, str] = {}
+            transient: dict[str, str] = {}
             for image in images:
-                image_ok, image_message = _docker_image_available(image)
-                if not image_ok:
-                    unavailable[image] = image_message
+                availability = _docker_image_availability(image)
+                if availability.available:
+                    continue
+                if availability.status == "warning":
+                    transient[image] = availability.message
+                else:
+                    unavailable[image] = availability.message
             unavailable_images = sorted(unavailable)
             unavailable_summary = ", ".join(unavailable_images[:3])
             if len(unavailable_images) > 3:
                 unavailable_summary += f", +{len(unavailable_images) - 3} more"
+            transient_images = sorted(transient)
+            transient_summary = ", ".join(transient_images[:3])
+            if len(transient_images) > 3:
+                transient_summary += f", +{len(transient_images) - 3} more"
+            image_status = (
+                "error" if unavailable else "warning" if transient else "ok"
+            )
+            if unavailable:
+                image_message = (
+                    f"{len(unavailable)} container image(s) are not accessible: "
+                    f"{unavailable_summary}."
+                )
+                image_recommendation = (
+                    "Publish/login to the registry or override MOIRAWEAVE_*_IMAGE "
+                    "in .env."
+                )
+            elif transient:
+                image_message = (
+                    f"{len(transient)} container image availability check(s) had "
+                    f"transient registry/network failures: {transient_summary}."
+                )
+                image_recommendation = (
+                    "Retry `moira up`; Docker may still pull the images. If this "
+                    "persists, run `docker login` or override MOIRAWEAVE_*_IMAGE."
+                )
+            else:
+                image_message = (
+                    f"{len(images)} container image(s) are locally present or pullable."
+                )
+                image_recommendation = "No action needed."
             checks.append(
                 _doctor_check(
                     "container-images",
-                    "error" if unavailable else "ok",
-                    (
-                        f"{len(unavailable)} container image(s) are not accessible: "
-                        f"{unavailable_summary}."
-                    )
-                    if unavailable
-                    else f"{len(images)} container image(s) are locally present or pullable.",
-                    "Publish/login to the registry or override MOIRAWEAVE_*_IMAGE in .env."
-                    if unavailable
-                    else "No action needed.",
-                    {"unavailable": unavailable, "images": images},
+                    image_status,
+                    image_message,
+                    image_recommendation,
+                    {
+                        "unavailable": unavailable,
+                        "transient": transient,
+                        "images": images,
+                    },
                 )
             )
 

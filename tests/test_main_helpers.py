@@ -314,6 +314,111 @@ services:
     assert port_check["metadata"]["duplicates"] == [8000]
 
 
+def test_doctor_report_warns_on_transient_image_registry_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transient registry failures should not stop a local first run."""
+    workspace = _write_workspace(tmp_path)
+    (workspace / "docker-compose.yml").write_text(
+        """
+services:
+  api-gateway:
+    image: ghcr.io/test/api-gateway:latest
+    ports:
+      - "${API_GATEWAY_PORT:-8000}:8000"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_probe(command: list[str], **_kwargs: object) -> tuple[bool, str]:
+        if command[:3] == ["docker", "image", "inspect"]:
+            return False, "not present locally"
+        if command[:3] == ["docker", "manifest", "inspect"]:
+            return False, "timed out after 10s"
+        return True, "ok"
+
+    monkeypatch.setattr(MAIN_MODULE.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(MAIN_MODULE, "_probe_command", fake_probe)
+    monkeypatch.setattr(MAIN_MODULE.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(MAIN_MODULE, "_api_ready", lambda _url: (False, "offline"))
+    monkeypatch.setattr(
+        MAIN_MODULE,
+        "_url_reachable",
+        lambda _url: (False, "offline"),
+    )
+    monkeypatch.setattr(MAIN_MODULE, "_is_local_port_open", lambda _port: False)
+
+    report = _doctor_report(
+        target="local",
+        api_url="http://localhost:8000",
+        repo_root=workspace,
+    )
+
+    image_check = next(
+        check for check in report["checks"] if check["name"] == "container-images"
+    )
+    assert image_check["status"] == "warning"
+    assert image_check["metadata"]["transient"] == {
+        "ghcr.io/test/api-gateway:latest": "timed out after 10s"
+    }
+    assert image_check["metadata"]["unavailable"] == {}
+    assert _doctor_has_errors(report) is False
+
+
+def test_doctor_report_blocks_fatal_image_registry_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Private or missing images remain blocking onboarding errors."""
+    workspace = _write_workspace(tmp_path)
+    (workspace / "docker-compose.yml").write_text(
+        """
+services:
+  api-gateway:
+    image: ghcr.io/test/private-api-gateway:latest
+    ports:
+      - "${API_GATEWAY_PORT:-8000}:8000"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def fake_probe(command: list[str], **_kwargs: object) -> tuple[bool, str]:
+        if command[:3] == ["docker", "image", "inspect"]:
+            return False, "not present locally"
+        if command[:3] == ["docker", "manifest", "inspect"]:
+            return False, "denied: requested access to the resource is denied"
+        return True, "ok"
+
+    monkeypatch.setattr(MAIN_MODULE.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(MAIN_MODULE, "_probe_command", fake_probe)
+    monkeypatch.setattr(MAIN_MODULE, "_api_ready", lambda _url: (False, "offline"))
+    monkeypatch.setattr(
+        MAIN_MODULE,
+        "_url_reachable",
+        lambda _url: (False, "offline"),
+    )
+    monkeypatch.setattr(MAIN_MODULE, "_is_local_port_open", lambda _port: False)
+
+    report = _doctor_report(
+        target="local",
+        api_url="http://localhost:8000",
+        repo_root=workspace,
+    )
+
+    image_check = next(
+        check for check in report["checks"] if check["name"] == "container-images"
+    )
+    assert image_check["status"] == "error"
+    assert image_check["metadata"]["unavailable"] == {
+        "ghcr.io/test/private-api-gateway:latest": (
+            "denied: requested access to the resource is denied"
+        )
+    }
+    assert image_check["metadata"]["transient"] == {}
+    assert _doctor_has_errors(report) is True
+
+
 def test_docker_image_available_retries_remote_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
