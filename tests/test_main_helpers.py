@@ -122,6 +122,12 @@ def test_agent_template_manifest_for_hermes() -> None:
     ]
     assert manifest["spec"]["agent"]["adapter"] == "hermes"
     assert manifest["spec"]["agent"]["authTokenEnv"] == "HERMES_API_SERVER_KEY"
+    assert manifest["spec"]["agent"]["toolOwnership"] == "runtime"
+    requirements = manifest["spec"]["agent"]["runtimeRequirements"]
+    assert requirements["filesystem"]["persistentWorkspace"] is True
+    assert requirements["webSearch"]["enabled"] is True
+    assert requirements["browser"]["mode"] == "runtime-managed"
+    assert requirements["terminal"]["mode"] == "runtime-managed"
 
 
 def test_agent_template_manifest_for_openclaw() -> None:
@@ -133,6 +139,8 @@ def test_agent_template_manifest_for_openclaw() -> None:
     assert manifest["spec"]["secrets"] == ["OPENCLAW_GATEWAY_TOKEN"]
     assert manifest["spec"]["agent"]["adapter"] == "openclaw"
     assert manifest["spec"]["agent"]["authTokenEnv"] == "OPENCLAW_GATEWAY_TOKEN"
+    assert manifest["spec"]["agent"]["toolOwnership"] == "runtime"
+    assert manifest["spec"]["agent"]["runtimeRequirements"]["messaging"]["enabled"] is True
 
 
 def test_agent_template_manifest_for_external_agent_requires_endpoint() -> None:
@@ -186,6 +194,28 @@ def test_secret_inventory_reports_names_without_values(
     assert items["OPENAI_API_KEY"]["source"] == ".env"
     assert items["HERMES_API_SERVER_KEY"]["present"] is False
     assert items["HERMES_API_SERVER_KEY"]["source"] == "missing"
+
+
+def test_secret_inventory_includes_runtime_requirement_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime-owned browser/MCP secrets are still visible to MoiraWeave."""
+    monkeypatch.delenv("BROWSER_USE_API_KEY", raising=False)
+    manifest = _agent_template_manifest("hermes")
+    manifest["spec"]["agent"]["runtimeRequirements"]["browser"] = {
+        "mode": "cloud",
+        "requiredSecrets": ["BROWSER_USE_API_KEY"],
+    }
+
+    inventory = _secret_inventory([manifest], tmp_path)
+
+    items = {item["name"]: item for item in inventory["secrets"]}
+    assert items["BROWSER_USE_API_KEY"]["present"] is False
+    assert (
+        "hermes:spec.agent.runtimeRequirements.browser.requiredSecrets"
+        in items["BROWSER_USE_API_KEY"]["references"]
+    )
 
 
 def test_render_compose_injects_agent_auth_token_env(tmp_path: Path) -> None:

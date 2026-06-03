@@ -444,11 +444,20 @@ def _demo_agent_manifest(name: str) -> dict[str, Any]:
             "ports": [{"name": "http", "port": 8000}],
             "agent": {
                 "adapter": "generic-http",
+                "toolOwnership": "runtime",
                 "messagePath": "/message",
                 "statusPath": "/health",
                 "artifactsPath": "/artifacts",
                 "exposedChannels": ["ui", "api", "webhook"],
                 "capabilities": ["demo", "chat"],
+                "runtimeRequirements": {
+                    "filesystem": {"persistentWorkspace": False},
+                    "network": {"egress": "restricted"},
+                    "webSearch": {"enabled": False},
+                    "browser": {"mode": "none"},
+                    "terminal": {"mode": "none"},
+                    "messaging": {"enabled": False},
+                },
                 "dispatchTimeoutSeconds": 5,
                 "pollIntervalSeconds": 1,
             },
@@ -501,12 +510,28 @@ def _agent_template_manifest(
                 "secrets": ["OPENAI_API_KEY", "HERMES_API_SERVER_KEY"],
                 "agent": {
                     "adapter": "hermes",
+                    "toolOwnership": "runtime",
                     "requiredSecrets": ["OPENAI_API_KEY"],
                     "workspaceMount": "/workspace",
                     "authTokenEnv": "HERMES_API_SERVER_KEY",
                     "model": "hermes-agent",
                     "exposedChannels": ["ui", "api"],
                     "capabilities": ["chat", "tools", "long-running"],
+                    "runtimeRequirements": {
+                        "filesystem": {
+                            "persistentWorkspace": True,
+                            "workspaceMount": "/workspace",
+                        },
+                        "network": {"egress": "enabled"},
+                        "webSearch": {"enabled": True},
+                        "browser": {"mode": "runtime-managed"},
+                        "terminal": {
+                            "mode": "runtime-managed",
+                            "approval": "runtime",
+                        },
+                        "mcp": {"enabled": True},
+                        "messaging": {"enabled": True},
+                    },
                     "pollIntervalSeconds": 2,
                 },
             },
@@ -537,11 +562,27 @@ def _agent_template_manifest(
                 "secrets": ["OPENCLAW_GATEWAY_TOKEN"],
                 "agent": {
                     "adapter": "openclaw",
+                    "toolOwnership": "runtime",
                     "agentId": "main",
                     "authTokenEnv": "OPENCLAW_GATEWAY_TOKEN",
                     "workspaceMount": "/workspace",
                     "exposedChannels": ["ui", "api"],
                     "capabilities": ["browser", "tools", "long-running"],
+                    "runtimeRequirements": {
+                        "filesystem": {
+                            "persistentWorkspace": True,
+                            "workspaceMount": "/workspace",
+                        },
+                        "network": {"egress": "enabled"},
+                        "webSearch": {"enabled": True},
+                        "browser": {"mode": "runtime-managed"},
+                        "terminal": {
+                            "mode": "runtime-managed",
+                            "approval": "runtime",
+                        },
+                        "mcp": {"enabled": True},
+                        "messaging": {"enabled": True},
+                    },
                     "pollIntervalSeconds": 2,
                 },
             },
@@ -574,11 +615,19 @@ def _agent_template_manifest(
                 "ports": [{"name": "http", "port": runtime_port}],
                 "agent": {
                     "adapter": "generic-http",
+                    "toolOwnership": "runtime",
                     "messagePath": "/message",
                     "statusPath": "/health",
                     "cancelPath": "/cancel",
                     "artifactsPath": "/artifacts",
                     "exposedChannels": ["ui", "api"],
+                    "runtimeRequirements": {
+                        "filesystem": {"persistentWorkspace": False},
+                        "network": {"egress": "restricted"},
+                        "webSearch": {"enabled": False},
+                        "browser": {"mode": "none"},
+                        "terminal": {"mode": "runtime-managed"},
+                    },
                 },
             },
         }
@@ -603,7 +652,15 @@ def _agent_template_manifest(
                 "execution": {"mode": "session", "timeoutSeconds": 86400},
                 "agent": {
                     "adapter": "generic-http",
+                    "toolOwnership": "runtime",
                     "exposedChannels": ["ui", "api"],
+                    "runtimeRequirements": {
+                        "filesystem": {"persistentWorkspace": False},
+                        "network": {"egress": "restricted"},
+                        "webSearch": {"enabled": False},
+                        "browser": {"mode": "none"},
+                        "terminal": {"mode": "runtime-managed"},
+                    },
                 },
             },
         }
@@ -612,6 +669,37 @@ def _agent_template_manifest(
         f"Unknown agent template: {template}",
         hint="Use demo-agent, hermes, openclaw, generic-http-agent, external-agent, or none.",
     )
+
+
+def _agent_runtime_requirements(
+    adapter: str,
+    *,
+    persistent_workspace: bool,
+    workspace_mount: str | None,
+) -> dict[str, Any]:
+    if adapter in {"hermes", "openclaw"}:
+        return {
+            "filesystem": {
+                "persistentWorkspace": persistent_workspace,
+                "workspaceMount": workspace_mount,
+            },
+            "network": {"egress": "enabled"},
+            "webSearch": {"enabled": True},
+            "browser": {"mode": "runtime-managed"},
+            "terminal": {"mode": "runtime-managed", "approval": "runtime"},
+            "mcp": {"enabled": True},
+            "messaging": {"enabled": True},
+        }
+    return {
+        "filesystem": {
+            "persistentWorkspace": persistent_workspace,
+            "workspaceMount": workspace_mount,
+        },
+        "network": {"egress": "restricted"},
+        "webSearch": {"enabled": False},
+        "browser": {"mode": "none"},
+        "terminal": {"mode": "runtime-managed"},
+    }
 
 
 def _dotenv_values(repo_root: pathlib.Path) -> dict[str, str]:
@@ -647,7 +735,33 @@ def _workload_secret_references(manifest: dict[str, Any]) -> list[tuple[str, str
         auth_token_env = agent.get("authTokenEnv")
         if auth_token_env:
             references.append((str(auth_token_env), "spec.agent.authTokenEnv"))
+        for path, value in _runtime_requirement_secret_refs(
+            agent.get("runtimeRequirements") or {}
+        ):
+            references.append((value, f"spec.agent.runtimeRequirements.{path}"))
     return references
+
+
+def _runtime_requirement_secret_refs(
+    value: Any,
+    *,
+    path: str = "",
+) -> list[tuple[str, str]]:
+    if isinstance(value, dict):
+        refs: list[tuple[str, str]] = []
+        for key, item in value.items():
+            next_path = f"{path}.{key}" if path else str(key)
+            if key == "requiredSecrets" and isinstance(item, list):
+                refs.extend((next_path, str(secret)) for secret in item)
+            else:
+                refs.extend(_runtime_requirement_secret_refs(item, path=next_path))
+        return refs
+    if isinstance(value, list):
+        refs = []
+        for index, item in enumerate(value):
+            refs.extend(_runtime_requirement_secret_refs(item, path=f"{path}.{index}"))
+        return refs
+    return []
 
 
 def _secret_inventory(
@@ -1707,6 +1821,12 @@ def workload_new(
         _exit_with_error("Invalid deployment target. Use local or kubernetes.")
     if adapter not in {"generic-http", "hermes", "openclaw"}:
         _exit_with_error("Invalid adapter. Use generic-http, hermes, or openclaw.")
+    if workload_type == "agent-service" and adapter in {"hermes", "openclaw"}:
+        workspace_mount = workspace_mount or "/workspace"
+        if not persistence:
+            persistence = True
+        if mount_path == "/data":
+            mount_path = workspace_mount
     if workload_type != "pipeline" and deployment_mode == "managed" and not image:
         _exit_with_error(
             "--image is required for managed model-service and agent-service workloads"
@@ -1755,6 +1875,7 @@ def workload_new(
     if workload_type == "agent-service":
         manifest["spec"]["agent"] = {
             "adapter": adapter,
+            "toolOwnership": "runtime",
             "requiredSecrets": list(secret),
             "exposedChannels": list(dict.fromkeys(channel)),
             "externalOwnedChannels": list(dict.fromkeys(external_channel)),
@@ -1763,6 +1884,11 @@ def workload_new(
             "agentId": agent_id,
             "model": model,
             "instructions": instructions,
+            "runtimeRequirements": _agent_runtime_requirements(
+                adapter,
+                persistent_workspace=persistence,
+                workspace_mount=workspace_mount,
+            ),
             "dispatchTimeoutSeconds": dispatch_timeout_seconds,
             "pollIntervalSeconds": poll_interval_seconds,
         }

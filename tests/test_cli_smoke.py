@@ -155,6 +155,10 @@ class TestCLIWorkloads:
         assert manifest["spec"]["env"]["API_SERVER_PORT"] == "8642"
         assert manifest["spec"]["deployment"]["mode"] == "managed"
         assert manifest["spec"]["deployment"]["targets"] == ["local", "kubernetes"]
+        assert manifest["spec"]["persistence"] == {
+            "enabled": True,
+            "mountPath": "/workspace",
+        }
         assert manifest["spec"]["agent"]["adapter"] == "hermes"
         assert manifest["spec"]["agent"]["workspaceMount"] == "/workspace"
         assert manifest["spec"]["agent"]["authTokenEnv"] == "HERMES_API_SERVER_KEY"
@@ -163,6 +167,12 @@ class TestCLIWorkloads:
         assert manifest["spec"]["agent"]["pollIntervalSeconds"] == 1.5
         assert manifest["spec"]["agent"]["exposedChannels"] == ["ui", "api"]
         assert manifest["spec"]["agent"]["externalOwnedChannels"] == ["telegram"]
+        assert manifest["spec"]["agent"]["toolOwnership"] == "runtime"
+        requirements = manifest["spec"]["agent"]["runtimeRequirements"]
+        assert requirements["filesystem"]["persistentWorkspace"] is True
+        assert requirements["network"]["egress"] == "enabled"
+        assert requirements["webSearch"]["enabled"] is True
+        assert requirements["browser"]["mode"] == "runtime-managed"
 
     def test_workload_new_external_agent_requires_endpoint(
         self, cli_command: list[str], initialized_workspace: Path
