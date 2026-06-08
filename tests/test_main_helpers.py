@@ -253,6 +253,37 @@ def test_render_compose_does_not_publish_demo_agent_host_port(
     assert "ports" not in compose["services"]["demo-agent"]
 
 
+def test_render_compose_supports_multiple_real_agent_templates(
+    tmp_path: Path,
+) -> None:
+    """Hermes and OpenClaw can run together without port or mount collisions."""
+    hermes = _agent_template_manifest("hermes")
+    openclaw = _agent_template_manifest("openclaw")
+
+    compose = _render_local_workload_compose([hermes, openclaw], tmp_path)
+
+    services = compose["services"]
+    assert set(services) == {"hermes", "openclaw"}
+    assert services["hermes"]["ports"] == ["8642:8642"]
+    assert services["openclaw"]["ports"] == ["18789:18789"]
+    assert services["hermes"]["environment"]["OPENAI_API_KEY"] == (
+        "${OPENAI_API_KEY:?set OPENAI_API_KEY}"
+    )
+    assert services["hermes"]["environment"]["HERMES_API_SERVER_KEY"] == (
+        "${HERMES_API_SERVER_KEY:?set HERMES_API_SERVER_KEY}"
+    )
+    assert services["openclaw"]["environment"]["OPENCLAW_GATEWAY_TOKEN"] == (
+        "${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN}"
+    )
+    assert services["hermes"]["volumes"] == [
+        f"{tmp_path / '.moiraweave' / 'artifacts' / 'hermes'}:/workspace"
+    ]
+    assert services["openclaw"]["volumes"] == [
+        f"{tmp_path / '.moiraweave' / 'artifacts' / 'openclaw'}:/workspace"
+    ]
+    assert compose["networks"] == {"moiraweave-net": {"name": "moiraweave-net"}}
+
+
 def test_doctor_report_blocks_missing_docker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1610,13 +1610,19 @@ def _render_local_workload_compose(
                 service["ports"] = ports
 
         persistence = spec.get("persistence") or {}
+        persistence_mount_path = None
         if isinstance(persistence, dict) and persistence.get("enabled"):
             mount_path = persistence.get("mountPath")
             if mount_path:
+                persistence_mount_path = str(mount_path)
                 host_path = artifacts_root / name
                 host_path.mkdir(parents=True, exist_ok=True)
                 service["volumes"] = [f"{host_path}:{mount_path}"]
-        if isinstance(agent, dict) and agent.get("workspaceMount"):
+        if (
+            isinstance(agent, dict)
+            and agent.get("workspaceMount")
+            and str(agent["workspaceMount"]) != persistence_mount_path
+        ):
             host_path = artifacts_root / name / "workspace"
             host_path.mkdir(parents=True, exist_ok=True)
             service.setdefault("volumes", []).append(
