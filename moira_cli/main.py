@@ -938,9 +938,7 @@ def _doctor_action_guide(
     items: list[dict[str, str]] = []
     check_by_name = {str(check["name"]): check for check in checks}
     secret_inventory = (
-        check_by_name.get("secrets", {})
-        .get("metadata", {})
-        .get("inventory", {})
+        check_by_name.get("secrets", {}).get("metadata", {}).get("inventory", {})
     )
     if isinstance(secret_inventory, dict):
         missing_secrets = [
@@ -974,7 +972,9 @@ def _doctor_action_guide(
         if check["status"] == "ok":
             continue
         name = str(check["name"])
-        if name == "secrets" and any(item["title"] == "Set Missing Secrets" for item in items):
+        if name == "secrets" and any(
+            item["title"] == "Set Missing Secrets" for item in items
+        ):
             continue
         if name == "docker-cli":
             items.append(

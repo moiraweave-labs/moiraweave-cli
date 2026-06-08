@@ -293,8 +293,7 @@ def test_doctor_report_exposes_action_guide_json(
     assert "action_guide" in report
     assert "sk-" not in json.dumps(report)
     assert any(
-        item["title"] == "Set Missing Secrets"
-        and "OPENAI_API_KEY" in item["detail"]
+        item["title"] == "Set Missing Secrets" and "OPENAI_API_KEY" in item["detail"]
         for item in report["action_guide"]
     )
 
