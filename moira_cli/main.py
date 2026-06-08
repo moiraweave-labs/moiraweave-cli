@@ -929,6 +929,184 @@ def _doctor_overall_status(checks: list[dict[str, Any]]) -> str:
     )
 
 
+def _doctor_action_guide(
+    checks: list[dict[str, Any]],
+    *,
+    target: str,
+    env: str = "local",
+) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    check_by_name = {str(check["name"]): check for check in checks}
+    secret_inventory = (
+        check_by_name.get("secrets", {})
+        .get("metadata", {})
+        .get("inventory", {})
+    )
+    if isinstance(secret_inventory, dict):
+        missing_secrets = [
+            str(secret.get("name"))
+            for secret in secret_inventory.get("secrets", [])
+            if isinstance(secret, dict) and not secret.get("present")
+        ]
+        if missing_secrets:
+            local_secret_lines = "\\n".join(f"{name}=..." for name in missing_secrets)
+            kubernetes_secret_args = " ".join(
+                f"--from-literal={name}=..." for name in missing_secrets
+            )
+            items.append(
+                {
+                    "title": "Set Missing Secrets",
+                    "state": "missing",
+                    "detail": (
+                        "Required secret names are missing: "
+                        f"{', '.join(sorted(missing_secrets))}. Values stay outside "
+                        "the CLI, UI, and API."
+                    ),
+                    "command": (
+                        f"kubectl create secret generic moiraweave-secrets {kubernetes_secret_args}"
+                        if target == "kubernetes"
+                        else f"printf '{local_secret_lines}\\n' >> .env"
+                    ),
+                }
+            )
+
+    for check in checks:
+        if check["status"] == "ok":
+            continue
+        name = str(check["name"])
+        if name == "secrets" and any(item["title"] == "Set Missing Secrets" for item in items):
+            continue
+        if name == "docker-cli":
+            items.append(
+                _doctor_guide_item(
+                    "Install Docker",
+                    check,
+                    command="docker --version",
+                )
+            )
+        elif name in {"docker-compose", "docker-daemon"}:
+            items.append(
+                _doctor_guide_item(
+                    "Restore Docker Compose",
+                    check,
+                    command="docker compose version",
+                )
+            )
+        elif name in {"compose-base", "workload-manifests"}:
+            items.append(
+                _doctor_guide_item(
+                    "Regenerate Workspace Files",
+                    check,
+                    command="moira init --non-interactive",
+                )
+            )
+        elif name == "compose-workloads":
+            items.append(
+                _doctor_guide_item(
+                    "Generate Workload Compose",
+                    check,
+                    command="moira deploy local",
+                )
+            )
+        elif name == "compose-ports":
+            items.append(
+                _doctor_guide_item(
+                    "Resolve Port Collision",
+                    check,
+                    command="moira doctor --json",
+                )
+            )
+        elif name == "container-images":
+            items.append(
+                _doctor_guide_item(
+                    "Fix Container Images",
+                    check,
+                    command="docker login ghcr.io",
+                )
+            )
+        elif name == "api-ready":
+            items.append(
+                _doctor_guide_item(
+                    "Inspect API And Worker",
+                    check,
+                    command="docker compose logs api-gateway worker",
+                )
+            )
+        elif name == "ui":
+            items.append(
+                _doctor_guide_item(
+                    "Inspect UI",
+                    check,
+                    command="docker compose logs ui",
+                )
+            )
+        elif name == "local-ports":
+            items.append(
+                _doctor_guide_item(
+                    "Free Local Ports",
+                    check,
+                    command="moira doctor --json",
+                )
+            )
+        elif name == "demo-agent":
+            items.append(
+                _doctor_guide_item(
+                    "Create Demo Agent",
+                    check,
+                    command="moira up --agent demo-agent",
+                )
+            )
+        else:
+            items.append(_doctor_guide_item(str(check["name"]), check))
+
+    if not items:
+        return [
+            {
+                "title": "Ready",
+                "state": "ready",
+                "detail": (
+                    "No blocking action detected for the selected local workspace."
+                ),
+                "command": f"moira deploy {target} --register"
+                if target != "local"
+                else "moira up",
+            }
+        ]
+    if any(item["title"] == "Set Missing Secrets" for item in items) and not any(
+        item["title"] == "Sync Deployment Record" for item in items
+    ):
+        items.append(
+            {
+                "title": "Sync Deployment Record",
+                "state": "not_checked",
+                "detail": (
+                    f"After the runtime starts, sync a {target}/{env} deployment "
+                    "record so MoiraWeave can connect runs, health, and artifacts."
+                ),
+                "command": "moira deploy local --register"
+                if target == "local"
+                else f"moira deploy k8s --env {env} --register",
+            }
+        )
+    return items
+
+
+def _doctor_guide_item(
+    title: str,
+    check: dict[str, Any],
+    *,
+    command: str | None = None,
+) -> dict[str, str]:
+    item = {
+        "title": title,
+        "state": str(check["status"]),
+        "detail": str(check["recommendation"] or check["message"]),
+    }
+    if command:
+        item["command"] = command
+    return item
+
+
 def _safe_load_workload_manifests(
     repo_root: pathlib.Path,
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -1477,12 +1655,14 @@ def _doctor_report(
             )
         )
 
+    action_guide = _doctor_action_guide(checks, target=target, env="local")
     return {
         "target": target,
         "api_url": api_url,
         "workspace": str(workspace_root) if workspace_root is not None else None,
         "status": _doctor_overall_status(checks),
         "checks": checks,
+        "action_guide": action_guide,
     }
 
 
@@ -1511,6 +1691,27 @@ def _print_doctor_report(report: dict[str, Any]) -> None:
             str(check["recommendation"]),
         )
     ui.print_table(table)
+    action_guide = report.get("action_guide")
+    if isinstance(action_guide, list) and action_guide:
+        guide_table = ui.table(
+            title="Deployment readiness guide",
+            columns=[
+                ("Action", "cyan"),
+                ("State", "bold"),
+                ("Detail", "white"),
+                ("Command", "bright_black"),
+            ],
+        )
+        for item in action_guide:
+            if not isinstance(item, dict):
+                continue
+            guide_table.add_row(
+                str(item.get("title", "-")),
+                str(item.get("state", "-")),
+                str(item.get("detail", "-")),
+                str(item.get("command", "")),
+            )
+        ui.print_table(guide_table)
     if report["status"] == "ok":
         ui.success("MoiraWeave local diagnostics passed.")
     elif report["status"] == "warning":

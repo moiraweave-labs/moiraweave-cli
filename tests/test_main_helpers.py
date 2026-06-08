@@ -18,6 +18,7 @@ MAIN_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MAIN_MODULE)
 
 _agent_template_manifest = MAIN_MODULE._agent_template_manifest
+_doctor_action_guide = MAIN_MODULE._doctor_action_guide
 _doctor_has_errors = MAIN_MODULE._doctor_has_errors
 _doctor_report = MAIN_MODULE._doctor_report
 _docker_image_available = MAIN_MODULE._docker_image_available
@@ -225,6 +226,76 @@ def test_secret_inventory_includes_runtime_requirement_secrets(
     assert (
         "hermes:spec.agent.runtimeRequirements.browser.requiredSecrets"
         in items["BROWSER_USE_API_KEY"]["references"]
+    )
+
+
+def test_doctor_action_guide_turns_missing_secrets_into_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doctor action guide mirrors the UI readiness guidance for real agents."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("HERMES_API_SERVER_KEY", raising=False)
+    manifest = _agent_template_manifest("hermes")
+    inventory = _secret_inventory([manifest], tmp_path)
+    checks = [
+        {
+            "name": "secrets",
+            "status": "error",
+            "message": "2 required secret(s) missing.",
+            "recommendation": "Run `moira secrets list` and add missing names.",
+            "metadata": {"inventory": inventory},
+        }
+    ]
+
+    guide = _doctor_action_guide(checks, target="local", env="local")
+
+    secret_item = next(item for item in guide if item["title"] == "Set Missing Secrets")
+    assert secret_item["state"] == "missing"
+    assert "OPENAI_API_KEY" in secret_item["detail"]
+    assert "HERMES_API_SERVER_KEY" in secret_item["detail"]
+    assert "Values stay outside the CLI, UI, and API." in secret_item["detail"]
+    assert secret_item["command"] == (
+        "printf 'HERMES_API_SERVER_KEY=...\\nOPENAI_API_KEY=...\\n' >> .env"
+    )
+    assert any(item["title"] == "Sync Deployment Record" for item in guide)
+
+
+def test_doctor_report_exposes_action_guide_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Machine-readable doctor output includes actionable onboarding guidance."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("HERMES_API_SERVER_KEY", raising=False)
+    workspace = _write_workspace(tmp_path)
+    hermes_root = workspace / ".moiraweave" / "workloads" / "hermes"
+    hermes_root.mkdir(parents=True)
+    (hermes_root / "workload.yaml").write_text(
+        MAIN_MODULE.yaml.safe_dump(_agent_template_manifest("hermes")),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MAIN_MODULE.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(MAIN_MODULE, "_api_ready", lambda _url: (False, "offline"))
+    monkeypatch.setattr(
+        MAIN_MODULE,
+        "_url_reachable",
+        lambda _url: (False, "offline"),
+    )
+    monkeypatch.setattr(MAIN_MODULE, "_is_local_port_open", lambda _port: False)
+
+    report = _doctor_report(
+        target="local",
+        api_url="http://localhost:8000",
+        repo_root=workspace,
+    )
+
+    assert "action_guide" in report
+    assert "sk-" not in json.dumps(report)
+    assert any(
+        item["title"] == "Set Missing Secrets"
+        and "OPENAI_API_KEY" in item["detail"]
+        for item in report["action_guide"]
     )
 
 

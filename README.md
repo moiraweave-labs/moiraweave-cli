@@ -40,6 +40,12 @@ moira doctor
 moira doctor --json
 ```
 
+Doctor prints both the raw checks and a deployment readiness guide. For real
+agents such as Hermes or OpenClaw, the guide turns missing secrets, Docker
+issues, generated Compose gaps, API/UI reachability, and deployment record gaps
+into concrete next commands. The `--json` output includes the same
+`action_guide` data for automation.
+
 For development or private registries, override platform images in `.env`:
 `MOIRAWEAVE_API_GATEWAY_IMAGE`, `MOIRAWEAVE_WORKER_IMAGE`, and
 `MOIRAWEAVE_UI_IMAGE`.
