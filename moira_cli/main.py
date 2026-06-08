@@ -511,6 +511,26 @@ def _demo_agent_manifest(name: str) -> dict[str, Any]:
     }
 
 
+def _http_probe(port: str, path: str = "/health") -> dict[str, Any]:
+    return {
+        "httpGet": {"path": path, "port": port},
+        "initialDelaySeconds": 5,
+        "periodSeconds": 10,
+        "timeoutSeconds": 5,
+        "failureThreshold": 6,
+    }
+
+
+def _tcp_probe(port: str) -> dict[str, Any]:
+    return {
+        "tcpSocket": {"port": port},
+        "initialDelaySeconds": 5,
+        "periodSeconds": 10,
+        "timeoutSeconds": 5,
+        "failureThreshold": 6,
+    }
+
+
 def _agent_template_manifest(
     template: str,
     *,
@@ -546,6 +566,13 @@ def _agent_template_manifest(
                 "execution": {"mode": "session", "timeoutSeconds": 172800},
                 "ports": [{"name": "http", "port": runtime_port}],
                 "persistence": {"enabled": True, "mountPath": "/workspace"},
+                "livenessProbe": {
+                    **_http_probe("http"),
+                    "initialDelaySeconds": 15,
+                    "periodSeconds": 30,
+                    "failureThreshold": 3,
+                },
+                "readinessProbe": _http_probe("http"),
                 "env": {
                     "API_SERVER_ENABLED": "true",
                     "API_SERVER_HOST": "0.0.0.0",
@@ -603,6 +630,13 @@ def _agent_template_manifest(
                 "execution": {"mode": "session", "timeoutSeconds": 172800},
                 "ports": [{"name": "gateway", "port": runtime_port}],
                 "persistence": {"enabled": True, "mountPath": "/workspace"},
+                "livenessProbe": {
+                    **_tcp_probe("gateway"),
+                    "initialDelaySeconds": 15,
+                    "periodSeconds": 30,
+                    "failureThreshold": 3,
+                },
+                "readinessProbe": _tcp_probe("gateway"),
                 "agent": {
                     "adapter": "openclaw",
                     "toolOwnership": "runtime",
