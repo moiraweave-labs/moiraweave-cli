@@ -117,10 +117,7 @@ def test_agent_template_manifest_for_hermes() -> None:
     assert manifest["metadata"]["name"] == "hermes"
     assert manifest["spec"]["image"] == "ghcr.io/nousresearch/hermes-agent:latest"
     assert manifest["spec"]["ports"] == [{"name": "http", "port": 8642}]
-    assert manifest["spec"]["secrets"] == [
-        "OPENAI_API_KEY",
-        "HERMES_API_SERVER_KEY",
-    ]
+    assert manifest["spec"]["secrets"] == ["OPENAI_API_KEY"]
     assert manifest["spec"]["agent"]["adapter"] == "hermes"
     assert manifest["spec"]["agent"]["authTokenEnv"] == "HERMES_API_SERVER_KEY"
     assert manifest["spec"]["agent"]["toolOwnership"] == "runtime"
@@ -137,7 +134,7 @@ def test_agent_template_manifest_for_openclaw() -> None:
 
     assert manifest["metadata"]["name"] == "openclaw"
     assert manifest["spec"]["ports"] == [{"name": "gateway", "port": 18789}]
-    assert manifest["spec"]["secrets"] == ["OPENCLAW_GATEWAY_TOKEN"]
+    assert "secrets" not in manifest["spec"]
     assert manifest["spec"]["agent"]["adapter"] == "openclaw"
     assert manifest["spec"]["agent"]["authTokenEnv"] == "OPENCLAW_GATEWAY_TOKEN"
     assert manifest["spec"]["agent"]["toolOwnership"] == "runtime"

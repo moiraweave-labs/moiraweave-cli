@@ -551,7 +551,7 @@ def _agent_template_manifest(
                     "API_SERVER_HOST": "0.0.0.0",
                     "API_SERVER_PORT": str(runtime_port),
                 },
-                "secrets": ["OPENAI_API_KEY", "HERMES_API_SERVER_KEY"],
+                "secrets": ["OPENAI_API_KEY"],
                 "agent": {
                     "adapter": "hermes",
                     "toolOwnership": "runtime",
@@ -603,7 +603,6 @@ def _agent_template_manifest(
                 "execution": {"mode": "session", "timeoutSeconds": 172800},
                 "ports": [{"name": "gateway", "port": runtime_port}],
                 "persistence": {"enabled": True, "mountPath": "/workspace"},
-                "secrets": ["OPENCLAW_GATEWAY_TOKEN"],
                 "agent": {
                     "adapter": "openclaw",
                     "toolOwnership": "runtime",
