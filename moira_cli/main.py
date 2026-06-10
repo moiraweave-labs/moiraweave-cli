@@ -1691,33 +1691,79 @@ def _print_doctor_report(report: dict[str, Any]) -> None:
             str(check["recommendation"]),
         )
     ui.print_table(table)
-    action_guide = report.get("action_guide")
-    if isinstance(action_guide, list) and action_guide:
-        guide_table = ui.table(
-            title="Deployment readiness guide",
-            columns=[
-                ("Action", "cyan"),
-                ("State", "bold"),
-                ("Detail", "white"),
-                ("Command", "bright_black"),
-            ],
-        )
-        for item in action_guide:
-            if not isinstance(item, dict):
-                continue
-            guide_table.add_row(
-                str(item.get("title", "-")),
-                str(item.get("state", "-")),
-                str(item.get("detail", "-")),
-                str(item.get("command", "")),
-            )
-        ui.print_table(guide_table)
+    _print_action_guide(report.get("action_guide"))
     if report["status"] == "ok":
         ui.success("MoiraWeave local diagnostics passed.")
     elif report["status"] == "warning":
         ui.warning("MoiraWeave local diagnostics passed with warnings.")
     else:
         ui.error("MoiraWeave local diagnostics found blocking errors.")
+
+
+def _print_action_guide(action_guide: Any) -> None:
+    if not isinstance(action_guide, list) or not action_guide:
+        return
+    guide_table = ui.table(
+        title="Deployment readiness guide",
+        columns=[
+            ("Action", "cyan"),
+            ("State", "bold"),
+            ("Detail", "white"),
+            ("Command", "bright_black"),
+        ],
+    )
+    for item in action_guide:
+        if not isinstance(item, dict):
+            continue
+        guide_table.add_row(
+            str(item.get("title", "-")),
+            str(item.get("state", "-")),
+            str(item.get("detail", "-")),
+            str(item.get("command", "")),
+        )
+    ui.print_table(guide_table)
+
+
+def _print_preflight_report(report: dict[str, Any]) -> None:
+    table = ui.table(
+        title=(
+            f"Preflight {report.get('workload_name', '-')}"
+            f" ({report.get('target', '-')})"
+        ),
+        columns=[
+            ("Check", "cyan"),
+            ("Status", "bold"),
+            ("Message", "white"),
+            ("Remediation", "bright_black"),
+        ],
+    )
+    for check in report.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        status_value = str(check.get("status", "-"))
+        status_label = status_value.upper()
+        if status_value == "passed":
+            status_label = f"[green]{status_label}[/green]"
+        elif status_value == "warning":
+            status_label = f"[yellow]{status_label}[/yellow]"
+        elif status_value == "failed":
+            status_label = f"[red]{status_label}[/red]"
+        table.add_row(
+            str(check.get("name", "-")),
+            status_label,
+            str(check.get("message", "-")),
+            str(check.get("remediation", "")),
+        )
+    ui.print_table(table)
+    _print_action_guide(report.get("action_guide"))
+
+    status_value = str(report.get("status", "unknown"))
+    if status_value == "passed":
+        ui.success("Workload preflight passed.")
+    elif status_value == "warning":
+        ui.warning("Workload preflight passed with warnings.")
+    else:
+        ui.error("Workload preflight failed.")
 
 
 def _watch_run(run_id: str, api_url: str, timeout: int) -> None:
@@ -2307,6 +2353,39 @@ def workload_status(
     console.print(Syntax(json.dumps(health, indent=2), "json"))
     runs = _request_json("GET", f"{api_url}/v1/runs?workload_name={name}&limit=5")
     console.print(Syntax(json.dumps(runs, indent=2), "json"))
+
+
+@workload_app.command("preflight")
+def workload_preflight(
+    name: str = typer.Argument(..., help="Workload name."),
+    target: str = typer.Option(
+        "local",
+        "--target",
+        help="Deployment target to validate: local, kubernetes/k8s, or external.",
+    ),
+    env: str = typer.Option("local", "--env", help="Deployment environment."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print raw preflight response as JSON.",
+    ),
+) -> None:
+    """Run API preflight and show concrete deployment readiness actions."""
+    normalized_target = "kubernetes" if target == "k8s" else target
+    if normalized_target not in {"local", "kubernetes", "external"}:
+        _exit_with_error("Invalid target. Use local, kubernetes/k8s, or external.")
+    response = _request_json(
+        "POST",
+        f"{api_url}/v1/workloads/{name}/preflight",
+        {"target": normalized_target, "env": env},
+    )
+    if json_output:
+        console.print(Syntax(json.dumps(response, indent=2), "json"))
+    else:
+        _print_preflight_report(response)
+    if response.get("status") == "failed":
+        raise typer.Exit(code=1)
 
 
 @workload_app.command("logs")

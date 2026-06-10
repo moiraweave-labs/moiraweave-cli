@@ -38,13 +38,16 @@ Use `moira doctor` whenever the local stack does not start cleanly:
 ```bash
 moira doctor
 moira doctor --json
+moira workload preflight demo-agent
 ```
 
 Doctor prints both the raw checks and a deployment readiness guide. For real
 agents such as Hermes or OpenClaw, the guide turns missing secrets, Docker
 issues, generated Compose gaps, API/UI reachability, and deployment record gaps
 into concrete next commands. The `--json` output includes the same
-`action_guide` data for automation.
+`action_guide` data for automation. Use `moira workload preflight <name>` after
+a workload exists in the API to run the control-plane checks for that specific
+runtime, target, and environment.
 
 For development or private registries, override platform images in `.env`:
 `MOIRAWEAVE_API_GATEWAY_IMAGE`, `MOIRAWEAVE_WORKER_IMAGE`, and
@@ -79,7 +82,7 @@ artifacts through the adapter.
 - `moira up --agent demo-agent|hermes|openclaw|generic-http-agent|external-agent`: initialize if needed, start the local stack, and register workloads.
 - `moira doctor`: diagnose local onboarding blockers before Docker starts.
 - `moira demo agent`: create a no-secret mock agent workload.
-- `moira workload new|list|show|deploy|status|logs`: manage workload manifests.
+- `moira workload new|list|show|deploy|status|preflight|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
 - `moira agent chat`: create a session if needed and send one message.
 - `moira agent session create|message|history`: interact with agent sessions.

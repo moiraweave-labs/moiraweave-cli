@@ -330,6 +330,75 @@ class TestCLIWorkloads:
         assert ui["networks"] == ["moiraweave-net"]
         assert compose["networks"]["moiraweave-net"]["name"] == "moiraweave-net"
 
+    def test_workload_preflight_prints_api_action_guide(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+        printed_guides: list[object] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {
+                "workload_name": "hermes",
+                "target": "kubernetes",
+                "status": "warning",
+                "checks": [
+                    {
+                        "name": "deployment_record",
+                        "status": "warning",
+                        "message": "No kubernetes deployment record is registered.",
+                        "remediation": "Sync deployment record.",
+                        "metadata": {},
+                    }
+                ],
+                "recommendations": ["Sync deployment record."],
+                "action_guide": [
+                    {
+                        "title": "Sync Deployment Record",
+                        "state": "warning",
+                        "detail": "Register or sync the kubernetes/dev deployment record.",
+                        "command": "moira deploy k8s --env dev --register",
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+        monkeypatch.setattr(
+            cli_main,
+            "_print_action_guide",
+            lambda action_guide: printed_guides.append(action_guide),
+        )
+
+        cli_main.workload_preflight(
+            "hermes",
+            target="k8s",
+            env="dev",
+            api_url="http://api:8000",
+            json_output=False,
+        )
+
+        assert calls == [
+            (
+                "POST",
+                "http://api:8000/v1/workloads/hermes/preflight",
+                {"target": "kubernetes", "env": "dev"},
+            )
+        ]
+        assert printed_guides == [
+            [
+                {
+                    "title": "Sync Deployment Record",
+                    "state": "warning",
+                    "detail": "Register or sync the kubernetes/dev deployment record.",
+                    "command": "moira deploy k8s --env dev --register",
+                }
+            ]
+        ]
+
 
 class TestCLIDefaults:
     def test_init_noninteractive_flag_recognized(
