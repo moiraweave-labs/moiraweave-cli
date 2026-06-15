@@ -1805,7 +1805,9 @@ def _print_records_table(
         columns=[(label, style) for _key, label, style in columns],
     )
     for record in records:
-        table.add_row(*[_table_value(record.get(key)) for key, _label, _style in columns])
+        table.add_row(
+            *[_table_value(record.get(key)) for key, _label, _style in columns]
+        )
     ui.print_table(table)
 
 
