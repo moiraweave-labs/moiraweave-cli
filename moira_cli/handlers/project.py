@@ -79,6 +79,11 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-moiraweave}:${POSTGRES_PASSWORD:-moiraweave-dev}@postgres:5432/${POSTGRES_DB:-moiraweave}
       WORKLOADS_DIR: /workspace/workloads
       ARTIFACTS_DIR: /workspace/artifacts
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      HF_HOME: /tmp/huggingface
+      FASTEMBED_CACHE_PATH: /tmp/fastembed
     networks:
       - moiraweave-net
     volumes:
@@ -101,6 +106,11 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-moiraweave}:${POSTGRES_PASSWORD:-moiraweave-dev}@postgres:5432/${POSTGRES_DB:-moiraweave}
       WORKLOADS_DIR: /workspace/workloads
       ARTIFACTS_DIR: /workspace/artifacts
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      HF_HOME: /tmp/huggingface
+      FASTEMBED_CACHE_PATH: /tmp/fastembed
     networks:
       - moiraweave-net
     volumes:

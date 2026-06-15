@@ -323,6 +323,14 @@ class TestCLIWorkloads:
         compose = yaml.safe_load(
             (initialized_workspace / "docker-compose.yml").read_text(encoding="utf-8")
         )
+        api_gateway = compose["services"]["api-gateway"]
+        assert api_gateway["environment"]["EMBEDDING_MODEL"] == "${EMBEDDING_MODEL:-}"
+        assert api_gateway["environment"]["HF_HOME"] == "/tmp/huggingface"
+        assert api_gateway["environment"]["FASTEMBED_CACHE_PATH"] == "/tmp/fastembed"
+
+        env_file = (initialized_workspace / ".env").read_text(encoding="utf-8")
+        assert "EMBEDDING_MODEL=\n" in env_file
+
         ui = compose["services"]["ui"]
         assert ui["image"] == (
             "${MOIRAWEAVE_UI_IMAGE:-ghcr.io/moiraweave-labs/moiraweave-ui:latest}"
