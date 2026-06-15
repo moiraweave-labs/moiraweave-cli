@@ -88,10 +88,20 @@ artifacts through the adapter.
 - `moira agent session create|message|history`: interact with agent sessions.
 - `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.
 - `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
+- `moira env list`: inspect environment-scoped deployment and operation counts.
+- `moira security me`: show the current subject, role, credential type, and team scope.
+- `moira security user list|create|disable`: manage persistent users.
+- `moira security team list|create|members|add-member`: manage teams and memberships.
+- `moira security api-key list|create|rotate|revoke`: manage hashed API keys; create and rotate print one-time secrets.
 
 Use `--channel` for channels MoiraWeave owns through its API gateway. Use
 `--external-channel telegram` when the agent runtime owns Telegram directly and
 MoiraWeave should only supervise the workload.
+
+Identity commands talk to the API gateway and use `MOIRA_TOKEN` or the
+workspace token saved by `moira up`. API keys can optionally be scoped with
+`--team-id` so automation runs as a team-aware operator instead of a global
+admin.
 
 ## Workspace Model
 

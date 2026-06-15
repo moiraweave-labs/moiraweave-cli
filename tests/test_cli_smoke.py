@@ -18,7 +18,7 @@ def repo_root() -> Path:
 
 @pytest.fixture
 def cli_command() -> list[str]:
-    return ["uv", "run", "moira"]
+    return ["uv", "run", "--frozen", "moira"]
 
 
 @pytest.fixture
@@ -58,6 +58,8 @@ class TestCLISmokeBasic:
         assert "agent" in result.stdout
         assert "demo" in result.stdout
         assert "up" in result.stdout
+        assert "security" in result.stdout
+        assert "env" in result.stdout
 
     def test_init_help(self, cli_command: list[str], repo_root: Path) -> None:
         result = subprocess.run(
@@ -412,6 +414,149 @@ class TestCLIDefaults:
         )
         assert result.returncode == 0
         assert "non-interactive" in result.stdout or result.returncode == 0
+
+
+class TestCLISecurity:
+    def test_security_user_create_posts_user_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {
+                "subject": "alice",
+                "role": "operator",
+                "display_name": "Alice Operator",
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_user_create(
+            "alice",
+            password="correct-horse",
+            role="operator",
+            display_name="Alice Operator",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "POST",
+                "http://api:8000/auth/users",
+                {
+                    "subject": "alice",
+                    "password": "correct-horse",
+                    "role": "operator",
+                    "display_name": "Alice Operator",
+                },
+            )
+        ]
+
+    def test_security_team_add_member_posts_membership(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"team_id": "agents", "subject": "team-bot", "role": "operator"}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_team_add_member(
+            "agents",
+            "team-bot",
+            role="operator",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "POST",
+                "http://api:8000/auth/teams/agents/members",
+                {"subject": "team-bot", "role": "operator"},
+            )
+        ]
+
+    def test_security_api_key_create_posts_team_scope(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {
+                "key_id": "key-1",
+                "name": "team automation",
+                "subject": "team-bot",
+                "role": "operator",
+                "team_id": "agents",
+                "secret": "mwk_test",
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_api_key_create(
+            "team automation",
+            "team-bot",
+            role="operator",
+            team_id="agents",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "POST",
+                "http://api:8000/auth/api-keys",
+                {
+                    "name": "team automation",
+                    "subject": "team-bot",
+                    "role": "operator",
+                    "team_id": "agents",
+                },
+            )
+        ]
+
+    def test_environment_list_fetches_control_plane_environments(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {
+                "data": [
+                    {
+                        "name": "local",
+                        "workload_count": 1,
+                        "deployment_count": 1,
+                        "operation_count": 0,
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.environment_list(api_url="http://api:8000", json_output=False)
+
+        assert calls == [("GET", "http://api:8000/v1/environments", None)]
 
 
 class TestCLIDeployRegistration:

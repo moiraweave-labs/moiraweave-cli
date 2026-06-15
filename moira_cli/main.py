@@ -86,6 +86,11 @@ agent_session_app = typer.Typer(help="Create and message agent sessions")
 deploy_app = typer.Typer(help="Generate or apply deployment assets")
 demo_app = typer.Typer(help="Create runnable demo workloads")
 secrets_app = typer.Typer(help="Inspect required workload secrets")
+security_app = typer.Typer(help="Manage users, teams, and API keys")
+security_user_app = typer.Typer(help="Manage users")
+security_team_app = typer.Typer(help="Manage teams")
+security_api_key_app = typer.Typer(help="Manage API keys")
+env_app = typer.Typer(help="Inspect deployment environments")
 
 
 class DockerImageAvailability:
@@ -111,7 +116,12 @@ app.add_typer(agent_app, name="agent")
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(demo_app, name="demo")
 app.add_typer(secrets_app, name="secrets")
+app.add_typer(security_app, name="security")
+app.add_typer(env_app, name="env")
 agent_app.add_typer(agent_session_app, name="session")
+security_app.add_typer(security_user_app, name="user")
+security_app.add_typer(security_team_app, name="team")
+security_app.add_typer(security_api_key_app, name="api-key")
 
 
 def _repo_root() -> pathlib.Path:
@@ -1766,6 +1776,45 @@ def _print_preflight_report(report: dict[str, Any]) -> None:
         ui.error("Workload preflight failed.")
 
 
+def _print_json(data: Any) -> None:
+    console.print(Syntax(json.dumps(data, indent=2), "json"))
+
+
+def _response_items(response: dict[str, Any]) -> list[dict[str, Any]]:
+    data = response.get("data", response)
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    return [data] if isinstance(data, dict) else []
+
+
+def _table_value(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value) or "-"
+    return str(value)
+
+
+def _print_records_table(
+    title: str,
+    columns: list[tuple[str, str, str]],
+    records: list[dict[str, Any]],
+) -> None:
+    table = ui.table(
+        title=title,
+        columns=[(label, style) for _key, label, style in columns],
+    )
+    for record in records:
+        table.add_row(*[_table_value(record.get(key)) for key, _label, _style in columns])
+    ui.print_table(table)
+
+
+def _validate_role(role: str) -> str:
+    if role not in {"admin", "operator", "viewer"}:
+        _exit_with_error("Invalid role. Use admin, operator, or viewer.")
+    return role
+
+
 def _watch_run(run_id: str, api_url: str, timeout: int) -> None:
     with Progress(
         SpinnerColumn(style="cyan"),
@@ -2446,6 +2495,265 @@ def secrets_list(
     console.print(Syntax(json.dumps(inventory, indent=2), "json"))
     if check and inventory["missing"]:
         raise typer.Exit(code=2)
+
+
+@env_app.command("list")
+def environment_list(
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """List deployment environments visible to the current credential."""
+    response = _request_json("GET", f"{api_url}/v1/environments")
+    if json_output:
+        _print_json(response.get("data", response))
+        return
+    _print_records_table(
+        "MoiraWeave environments",
+        [
+            ("name", "Environment", "cyan"),
+            ("workload_count", "Workloads", "white"),
+            ("deployment_count", "Deployments", "white"),
+            ("operation_count", "Operations", "white"),
+        ],
+        _response_items(response),
+    )
+
+
+@security_app.command("me")
+def security_me(
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """Show the authenticated subject, role, credential, and team scope."""
+    response = _request_json("GET", f"{api_url}/auth/me")
+    if json_output:
+        _print_json(response)
+        return
+    _print_records_table(
+        "Current MoiraWeave identity",
+        [
+            ("subject", "Subject", "cyan"),
+            ("role", "Role", "white"),
+            ("credential_type", "Credential", "white"),
+            ("team_id", "Key team", "white"),
+            ("teams", "Teams", "white"),
+        ],
+        [response],
+    )
+
+
+@security_user_app.command("list")
+def security_user_list(
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """List local MoiraWeave users."""
+    response = _request_json("GET", f"{api_url}/auth/users")
+    if json_output:
+        _print_json(response.get("data", response))
+        return
+    _print_records_table(
+        "MoiraWeave users",
+        [
+            ("subject", "Subject", "cyan"),
+            ("display_name", "Name", "white"),
+            ("role", "Role", "white"),
+            ("disabled_at", "Disabled", "white"),
+            ("updated_at", "Updated", "bright_black"),
+        ],
+        _response_items(response),
+    )
+
+
+@security_user_app.command("create")
+def security_user_create(
+    subject: str = typer.Argument(..., help="Login subject."),
+    password: str = typer.Option(
+        ...,
+        "--password",
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help="Password, minimum 8 characters.",
+    ),
+    role: str = typer.Option("operator", "--role", help="admin, operator, or viewer."),
+    display_name: str | None = typer.Option(None, "--display-name"),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Create or update a persistent user."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/auth/users",
+        {
+            "subject": subject,
+            "password": password,
+            "role": _validate_role(role),
+            "display_name": display_name,
+        },
+    )
+    ui.success(f"Saved user {response.get('subject', subject)}")
+    _print_json(response)
+
+
+@security_user_app.command("disable")
+def security_user_disable(
+    subject: str = typer.Argument(..., help="Login subject to disable."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Disable a user without deleting audit metadata."""
+    response = _request_json("DELETE", f"{api_url}/auth/users/{subject}")
+    ui.success(f"Disabled user {response.get('subject', subject)}")
+    _print_json(response)
+
+
+@security_team_app.command("list")
+def security_team_list(
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """List teams."""
+    response = _request_json("GET", f"{api_url}/auth/teams")
+    if json_output:
+        _print_json(response.get("data", response))
+        return
+    _print_records_table(
+        "MoiraWeave teams",
+        [
+            ("team_id", "Team", "cyan"),
+            ("name", "Name", "white"),
+            ("description", "Description", "white"),
+            ("updated_at", "Updated", "bright_black"),
+        ],
+        _response_items(response),
+    )
+
+
+@security_team_app.command("create")
+def security_team_create(
+    team_id: str = typer.Argument(..., help="Stable team id."),
+    name: str = typer.Argument(..., help="Display name."),
+    description: str | None = typer.Option(None, "--description"),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Create or update a team."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/auth/teams",
+        {"team_id": team_id, "name": name, "description": description},
+    )
+    ui.success(f"Saved team {response.get('team_id', team_id)}")
+    _print_json(response)
+
+
+@security_team_app.command("members")
+def security_team_members(
+    team_id: str = typer.Argument(..., help="Team id."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """List members in a team."""
+    response = _request_json("GET", f"{api_url}/auth/teams/{team_id}/members")
+    if json_output:
+        _print_json(response.get("data", response))
+        return
+    _print_records_table(
+        f"Members of {team_id}",
+        [
+            ("subject", "Subject", "cyan"),
+            ("role", "Role", "white"),
+            ("created_by", "Created by", "white"),
+            ("created_at", "Created", "bright_black"),
+        ],
+        _response_items(response),
+    )
+
+
+@security_team_app.command("add-member")
+def security_team_add_member(
+    team_id: str = typer.Argument(..., help="Team id."),
+    subject: str = typer.Argument(..., help="User subject."),
+    role: str = typer.Option("operator", "--role", help="admin, operator, or viewer."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Add or update a team member."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/auth/teams/{team_id}/members",
+        {"subject": subject, "role": _validate_role(role)},
+    )
+    ui.success(f"Saved {response.get('subject', subject)} in team {team_id}")
+    _print_json(response)
+
+
+@security_api_key_app.command("list")
+def security_api_key_list(
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """List API key metadata without secret values."""
+    response = _request_json("GET", f"{api_url}/auth/api-keys")
+    if json_output:
+        _print_json(response.get("data", response))
+        return
+    _print_records_table(
+        "MoiraWeave API keys",
+        [
+            ("key_id", "Key", "cyan"),
+            ("name", "Name", "white"),
+            ("subject", "Subject", "white"),
+            ("role", "Role", "white"),
+            ("team_id", "Team", "white"),
+            ("revoked_at", "Revoked", "white"),
+        ],
+        _response_items(response),
+    )
+
+
+@security_api_key_app.command("create")
+def security_api_key_create(
+    name: str = typer.Argument(..., help="Human-readable key name."),
+    subject: str = typer.Argument(..., help="Subject represented by the key."),
+    role: str = typer.Option("operator", "--role", help="admin, operator, or viewer."),
+    team_id: str | None = typer.Option(None, "--team-id", help="Optional team scope."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Create an API key and print its one-time secret."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/auth/api-keys",
+        {
+            "name": name,
+            "subject": subject,
+            "role": _validate_role(role),
+            "team_id": team_id,
+        },
+    )
+    ui.success(f"Created API key {response.get('key_id', '-')}")
+    ui.warning("Store the secret now. MoiraWeave will not show it again.")
+    _print_json(response)
+
+
+@security_api_key_app.command("rotate")
+def security_api_key_rotate(
+    key_id: str = typer.Argument(..., help="API key id to rotate."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Rotate an API key and print the replacement one-time secret."""
+    response = _request_json("POST", f"{api_url}/auth/api-keys/{key_id}/rotate")
+    ui.success(f"Rotated API key {key_id}")
+    ui.warning("Store the new secret now. MoiraWeave will not show it again.")
+    _print_json(response)
+
+
+@security_api_key_app.command("revoke")
+def security_api_key_revoke(
+    key_id: str = typer.Argument(..., help="API key id to revoke."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Revoke an API key."""
+    response = _request_json("DELETE", f"{api_url}/auth/api-keys/{key_id}")
+    ui.success(f"Revoked API key {response.get('key_id', key_id)}")
+    _print_json(response)
 
 
 @run_app.command("submit")
