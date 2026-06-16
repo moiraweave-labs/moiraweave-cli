@@ -795,6 +795,9 @@ class TestCLIDeployRegistration:
             controller_id="controller-1",
             limit=5,
             repo_root=tmp_path,
+            chart_ref="infra/helm/moiraweave",
+            namespace=None,
+            release="moiraweave",
         )
 
         assert (processed, failed) == (1, 0)
@@ -862,6 +865,9 @@ class TestCLIDeployRegistration:
             operation,
             api_url="http://api:8000",
             repo_root=tmp_path,
+            chart_ref="infra/helm/moiraweave",
+            namespace=None,
+            release="moiraweave",
         )
 
         assert ok is False
@@ -870,3 +876,81 @@ class TestCLIDeployRegistration:
         assert completions[0][2] is not None
         assert completions[0][2]["returncode"] == 1
         assert completions[0][2]["output"] == "pods not found"
+
+    def test_deployment_controller_can_apply_from_api_manifest(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        operation = {
+            "operation_id": "op-3",
+            "action": "apply",
+            "workload_name": "remote-agent",
+            "target": "kubernetes",
+            "env": "prod",
+        }
+        command_calls: list[list[str]] = []
+
+        monkeypatch.setattr(cli_main, "_load_workload_manifests", lambda _root: [])
+        monkeypatch.setattr(
+            cli_main,
+            "_fetch_workload_manifest",
+            lambda _api_url, _name: {
+                "apiVersion": "moiraweave.io/v1alpha1",
+                "kind": "Workload",
+                "metadata": {"name": "remote-agent"},
+                "spec": {
+                    "type": "agent-service",
+                    "image": "ghcr.io/example/remote-agent:latest",
+                    "ports": [{"name": "http", "port": 8080}],
+                },
+            },
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_append_deployment_operation_event",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_complete_deployment_operation",
+            lambda *_args, **_kwargs: {},
+        )
+
+        def fake_run(command: list[str], cwd: Path | None = None) -> tuple[int, str]:
+            del cwd
+            command_calls.append(command)
+            return 0, "release upgraded"
+
+        monkeypatch.setattr(cli_main, "_run_controller_command", fake_run)
+
+        ok = cli_main._run_deployment_controller_operation(
+            operation,
+            api_url="http://api:8000",
+            repo_root=tmp_path,
+            chart_ref="oci://ghcr.io/moiraweave-labs/charts/moiraweave",
+            namespace="moiraweave-prod",
+            release="mw-prod",
+        )
+
+        assert ok is True
+        assert command_calls == [
+            [
+                "helm",
+                "upgrade",
+                "--install",
+                "mw-prod",
+                "oci://ghcr.io/moiraweave-labs/charts/moiraweave",
+                "--namespace",
+                "moiraweave-prod",
+                "--create-namespace",
+                "-f",
+                str(tmp_path / ".moiraweave" / "deploy" / "values-workloads-prod.yaml"),
+            ]
+        ]
+        values = yaml.safe_load(
+            (
+                tmp_path / ".moiraweave" / "deploy" / "values-workloads-prod.yaml"
+            ).read_text(encoding="utf-8")
+        )
+        assert values["workloads"]["remote-agent"]["image"] == (
+            "ghcr.io/example/remote-agent:latest"
+        )

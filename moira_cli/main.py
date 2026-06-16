@@ -12,7 +12,7 @@ import subprocess
 import time
 from collections import Counter
 from typing import Any, NoReturn
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 import typer
@@ -422,9 +422,12 @@ def _deploy_root(repo_root: pathlib.Path) -> pathlib.Path:
 
 
 def _environment_namespace(repo_root: pathlib.Path, env: str) -> str:
-    config = load_moiraweave_config(repo_root)
-    target = config.environments.get(env)
-    return target.namespace if target and target.namespace else "moiraweave"
+    try:
+        config = load_moiraweave_config(repo_root)
+        target = config.environments.get(env)
+        return target.namespace if target and target.namespace else "moiraweave"
+    except Exception:
+        return "moiraweave"
 
 
 def _auth_token_path(repo_root: pathlib.Path) -> pathlib.Path:
@@ -3298,18 +3301,56 @@ def deploy_k8s(
         )
 
 
+def _fetch_workload_manifest(api_url: str, workload_name: str) -> dict[str, Any]:
+    response = _request_json(
+        "GET",
+        f"{api_url.rstrip('/')}/v1/workloads/{quote(workload_name, safe='')}",
+    )
+    manifest = response.get("manifest")
+    if not isinstance(manifest, dict):
+        _exit_with_error(
+            f"Workload {workload_name!r} did not include a manifest response."
+        )
+    return manifest
+
+
+def _controller_workload_manifests(
+    *,
+    api_url: str,
+    workload_name: str,
+    repo_root: pathlib.Path,
+) -> list[dict[str, Any]]:
+    local_manifests = _load_workload_manifests(repo_root)
+    matched = [
+        manifest
+        for manifest in local_manifests
+        if _workload_name(manifest) == workload_name
+    ]
+    if matched:
+        return matched
+    return [_fetch_workload_manifest(api_url, workload_name)]
+
+
 def _kubernetes_controller_command(
     operation: dict[str, Any],
     *,
+    api_url: str,
     repo_root: pathlib.Path,
+    chart_ref: str,
+    namespace: str | None,
+    release: str,
 ) -> tuple[list[str], pathlib.Path]:
     action = str(operation.get("action") or "")
     workload_name = str(operation.get("workload_name") or "")
     env = str(operation.get("env") or "dev")
-    namespace = _environment_namespace(repo_root, env)
+    resolved_namespace = namespace or _environment_namespace(repo_root, env)
 
     if action == "apply":
-        manifests = _load_workload_manifests(repo_root)
+        manifests = _controller_workload_manifests(
+            api_url=api_url,
+            workload_name=workload_name,
+            repo_root=repo_root,
+        )
         values = _render_helm_values(manifests)
         deploy_root = _deploy_root(repo_root)
         deploy_root.mkdir(parents=True, exist_ok=True)
@@ -3320,10 +3361,10 @@ def _kubernetes_controller_command(
                 "helm",
                 "upgrade",
                 "--install",
-                "moiraweave",
-                "infra/helm/moiraweave",
+                release,
+                chart_ref,
                 "--namespace",
-                namespace,
+                resolved_namespace,
                 "--create-namespace",
                 "-f",
                 str(output),
@@ -3337,7 +3378,7 @@ def _kubernetes_controller_command(
                 "kubectl",
                 "logs",
                 "-n",
-                namespace,
+                resolved_namespace,
                 "-l",
                 f"moiraweave.io/workload={workload_name}",
                 "--tail",
@@ -3353,7 +3394,7 @@ def _kubernetes_controller_command(
                 "delete",
                 "deployment,service,persistentvolumeclaim",
                 "-n",
-                namespace,
+                resolved_namespace,
                 "-l",
                 f"moiraweave.io/workload={workload_name}",
                 "--ignore-not-found=true",
@@ -3372,9 +3413,19 @@ def _run_deployment_controller_operation(
     *,
     api_url: str,
     repo_root: pathlib.Path,
+    chart_ref: str,
+    namespace: str | None,
+    release: str,
 ) -> bool:
     operation_id = str(operation["operation_id"])
-    command, cwd = _kubernetes_controller_command(operation, repo_root=repo_root)
+    command, cwd = _kubernetes_controller_command(
+        operation,
+        api_url=api_url,
+        repo_root=repo_root,
+        chart_ref=chart_ref,
+        namespace=namespace,
+        release=release,
+    )
     _append_deployment_operation_event(
         api_url,
         operation_id,
@@ -3421,6 +3472,9 @@ def _run_deployment_controller_once(
     controller_id: str,
     limit: int,
     repo_root: pathlib.Path,
+    chart_ref: str,
+    namespace: str | None,
+    release: str,
 ) -> tuple[int, int]:
     operations = _list_controller_operations(
         api_url, target=target, env=env, limit=limit
@@ -3438,6 +3492,9 @@ def _run_deployment_controller_once(
             claimed,
             api_url=api_url,
             repo_root=repo_root,
+            chart_ref=chart_ref,
+            namespace=namespace,
+            release=release,
         ):
             ui.success(f"Deployment operation {operation_id} succeeded")
         else:
@@ -3478,11 +3535,36 @@ def deploy_controller_run(
         min=0.5,
         help="Seconds between polls when --watch is enabled.",
     ),
+    chart_ref: str = typer.Option(
+        "infra/helm/moiraweave",
+        "--chart-ref",
+        envvar="MOIRAWEAVE_HELM_CHART_REF",
+        help="Helm chart path or OCI reference used for apply operations.",
+    ),
+    namespace: str | None = typer.Option(
+        None,
+        "--namespace",
+        envvar="MOIRAWEAVE_K8S_NAMESPACE",
+        help="Kubernetes namespace override for apply, logs, and undeploy.",
+    ),
+    release: str = typer.Option(
+        "moiraweave",
+        "--release",
+        envvar="MOIRAWEAVE_HELM_RELEASE",
+        help="Helm release name used for apply operations.",
+    ),
+    repo_root: pathlib.Path | None = typer.Option(
+        None,
+        "--repo-root",
+        help="Workspace root for local manifests; defaults to current workspace or cwd.",
+    ),
 ) -> None:
     """Claim and execute queued Kubernetes deployment operations."""
     if target != "kubernetes":
         _exit_with_error("Only target=kubernetes is supported by this controller.")
-    repo_root = _repo_root()
+    resolved_repo_root = (
+        repo_root or _maybe_repo_root() or pathlib.Path.cwd()
+    ).resolve()
     resolved_controller_id = (controller_id or f"{socket.gethostname()}-{os.getpid()}")[
         :128
     ]
@@ -3496,7 +3578,10 @@ def deploy_controller_run(
             env=env,
             controller_id=resolved_controller_id,
             limit=limit,
-            repo_root=repo_root,
+            repo_root=resolved_repo_root,
+            chart_ref=chart_ref,
+            namespace=namespace,
+            release=release,
         )
         total_processed += processed
         total_failed += failed
