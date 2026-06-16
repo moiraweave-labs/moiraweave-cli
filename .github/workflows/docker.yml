@@ -1,0 +1,153 @@
+name: Docker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - "release/**"
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/moiraweave-labs/moiraweave-cli
+
+jobs:
+  build:
+    name: Build & push CLI image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/moiraweave-labs/moiraweave-cli
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          no-cache: true
+          pull: true
+          platforms: linux/amd64
+
+      - name: Resolve image scan reference
+        id: scan-ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${IMAGE_NAME}:sha-${GITHUB_SHA::7}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            docker image inspect "${image}" >/dev/null
+            echo "image=${image}" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          for attempt in {1..12}; do
+            if docker buildx imagetools inspect "${image}" >/dev/null 2>&1; then
+              echo "image=${image}" >>"${GITHUB_OUTPUT}"
+              echo "Resolved image scan reference: ${image}"
+              exit 0
+            fi
+            echo "Image ${image} not visible yet; retrying (${attempt}/12)."
+            sleep 5
+          done
+          echo "::error title=GHCR image is not visible::${image} was pushed but could not be inspected after retries."
+          exit 1
+
+      - name: Trivy — enforce policy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.scan-ref.outputs.image }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Trivy — generate SARIF
+        if: ${{ always() && !cancelled() && steps.scan-ref.outputs.image != '' }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.scan-ref.outputs.image }}
+          format: sarif
+          output: trivy-cli.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF report
+        if: ${{ always() && hashFiles('trivy-cli.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-cli.sarif
+          category: trivy-cli
+
+  public-image-smoke:
+    name: Public image pull smoke
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Verify anonymous GHCR pull
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          image="${IMAGE_NAME}:latest"
+          settings_url="https://github.com/orgs/moiraweave-labs/packages/container/package/moiraweave-cli/settings"
+          for attempt in {1..12}; do
+            if docker manifest inspect "${image}" >/dev/null; then
+              echo "${image} is pullable without authentication."
+              exit 0
+            fi
+            echo "Anonymous pull check failed on attempt ${attempt}/12; retrying."
+            sleep 10
+          done
+          echo "::error title=GHCR image is not public::${image} was pushed, but it is not pullable without authentication. Set package visibility to public: ${settings_url}"
+          exit 1

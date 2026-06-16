@@ -60,6 +60,10 @@ Transient registry timeouts, 429s, or temporary GHCR issues are reported as
 warnings by `moira doctor`; private, missing, or denied images remain blocking
 errors.
 
+The CLI also publishes `ghcr.io/moiraweave-labs/moiraweave-cli:latest`. That
+image includes `moira`, Helm, and `kubectl` so it can run the Kubernetes
+deployment controller inside a cluster, CI runner, or operator shell.
+
 Start from another agent template when you want the first run to be a real
 runtime instead of the demo:
 
@@ -76,6 +80,13 @@ and native channel tools stay inside the agent runtime; MoiraWeave only prepares
 the declared deployment boundary and observes health, runs, events, and
 artifacts through the adapter.
 
+For Kubernetes, keep values in Kubernetes Secrets or an external secret
+manager. The CLI can verify key names without printing values:
+
+```bash
+moira secrets list --target kubernetes --env dev --kubernetes-secret moiraweave-secrets
+```
+
 ## Command Surface
 
 - `moira init`: create a MoiraWeave workspace.
@@ -88,7 +99,9 @@ artifacts through the adapter.
 - `moira agent session create|message|history`: interact with agent sessions.
 - `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.
 - `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
+- `moira deploy controller run`: claim queued Kubernetes deployment operations and execute Helm/kubectl outside the UI.
 - `moira env list`: inspect environment-scoped deployment and operation counts.
+- `moira secrets list`: inspect required secret names from local `.env`, shell environment, or Kubernetes Secret keys.
 - `moira security me`: show the current subject, role, credential type, and team scope.
 - `moira security user list|create|disable`: manage persistent users.
 - `moira security team list|create|members|add-member`: manage teams and memberships.

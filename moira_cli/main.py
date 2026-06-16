@@ -12,7 +12,7 @@ import subprocess
 import time
 from collections import Counter
 from typing import Any, NoReturn
-from urllib.parse import urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 import typer
@@ -84,6 +84,7 @@ run_app = typer.Typer(help="Submit, watch, and cancel runs")
 agent_app = typer.Typer(help="Manage agent sessions")
 agent_session_app = typer.Typer(help="Create and message agent sessions")
 deploy_app = typer.Typer(help="Generate or apply deployment assets")
+deploy_controller_app = typer.Typer(help="Run deployment operation controllers")
 demo_app = typer.Typer(help="Create runnable demo workloads")
 secrets_app = typer.Typer(help="Inspect required workload secrets")
 security_app = typer.Typer(help="Manage users, teams, and API keys")
@@ -122,6 +123,7 @@ agent_app.add_typer(agent_session_app, name="session")
 security_app.add_typer(security_user_app, name="user")
 security_app.add_typer(security_team_app, name="team")
 security_app.add_typer(security_api_key_app, name="api-key")
+deploy_app.add_typer(deploy_controller_app, name="controller")
 
 
 def _repo_root() -> pathlib.Path:
@@ -166,6 +168,26 @@ def _run_command(command: list[str], cwd: pathlib.Path | None = None) -> str:
         stderr = proc.stderr.strip() or "unknown error"
         _exit_with_error(f"Command failed: {' '.join(command)}\n{stderr}")
     return proc.stdout.strip()
+
+
+def _run_controller_command(
+    command: list[str], cwd: pathlib.Path | None = None
+) -> tuple[int, str]:
+    """Run a controller command without raising on failure."""
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return 127, str(exc)
+    output = "\n".join(
+        part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
+    )
+    return proc.returncode, output
 
 
 def _probe_command(
@@ -277,6 +299,79 @@ def _request_json(
         _exit_with_error(f"HTTP request failed for {url}: {exc}")
 
 
+def _deployment_operation_url(api_url: str, operation_id: str, suffix: str = "") -> str:
+    return f"{api_url.rstrip('/')}/v1/deployment-operations/{operation_id}{suffix}"
+
+
+def _list_controller_operations(
+    api_url: str,
+    *,
+    target: str,
+    env: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    query = urlencode(
+        {
+            "scope": "all",
+            "status": "queued",
+            "target": target,
+            "env": env,
+            "limit": str(limit),
+        }
+    )
+    response = _request_json(
+        "GET", f"{api_url.rstrip('/')}/v1/deployment-operations?{query}"
+    )
+    data = response.get("data", [])
+    return [dict(item) for item in data] if isinstance(data, list) else []
+
+
+def _claim_deployment_operation(
+    api_url: str,
+    operation_id: str,
+    *,
+    controller_id: str,
+) -> dict[str, Any]:
+    return _request_json(
+        "POST",
+        _deployment_operation_url(api_url, operation_id, "/claim"),
+        {
+            "controller_id": controller_id,
+            "metadata": {"client": "moira-cli", "mode": "deployment-controller"},
+        },
+    )
+
+
+def _append_deployment_operation_event(
+    api_url: str,
+    operation_id: str,
+    event_type: str,
+    message: str,
+    *,
+    data: dict[str, Any] | None = None,
+) -> None:
+    _request_json(
+        "POST",
+        _deployment_operation_url(api_url, operation_id, "/events"),
+        {"type": event_type, "message": message, "data": data or {}},
+    )
+
+
+def _complete_deployment_operation(
+    api_url: str,
+    operation_id: str,
+    *,
+    status: str,
+    message: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return _request_json(
+        "POST",
+        _deployment_operation_url(api_url, operation_id, "/complete"),
+        {"status": status, "message": message, "metadata": metadata or {}},
+    )
+
+
 def _parse_json_input(input_value: str) -> dict[str, Any]:
     """Parse CLI `--input` payload.
 
@@ -324,6 +419,15 @@ def _deploy_root(repo_root: pathlib.Path) -> pathlib.Path:
         return repo_root / config.deploy_dir
     except Exception:
         return repo_root / ".moiraweave" / "deploy"
+
+
+def _environment_namespace(repo_root: pathlib.Path, env: str) -> str:
+    try:
+        config = load_moiraweave_config(repo_root)
+        target = config.environments.get(env)
+        return target.namespace if target and target.namespace else "moiraweave"
+    except Exception:
+        return "moiraweave"
 
 
 def _auth_token_path(repo_root: pathlib.Path) -> pathlib.Path:
@@ -808,6 +912,60 @@ def _dotenv_keys(repo_root: pathlib.Path) -> set[str]:
     return set(_dotenv_values(repo_root))
 
 
+def _kubernetes_secret_keys(
+    namespace: str,
+    secret_name: str,
+) -> tuple[set[str], dict[str, Any]]:
+    command = [
+        "kubectl",
+        "get",
+        "secret",
+        secret_name,
+        "-n",
+        namespace,
+        "-o",
+        "json",
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return set(), {
+            "status": "unavailable",
+            "namespace": namespace,
+            "secret": secret_name,
+            "message": "kubectl was not found in PATH.",
+        }
+    if proc.returncode != 0:
+        return set(), {
+            "status": "unavailable",
+            "namespace": namespace,
+            "secret": secret_name,
+            "message": proc.stderr.strip() or "kubectl could not read the Secret.",
+        }
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return set(), {
+            "status": "unavailable",
+            "namespace": namespace,
+            "secret": secret_name,
+            "message": "kubectl returned invalid JSON for the Secret.",
+        }
+    data = payload.get("data") if isinstance(payload, dict) else None
+    keys = set(data) if isinstance(data, dict) else set()
+    return keys, {
+        "status": "available",
+        "namespace": namespace,
+        "secret": secret_name,
+        "key_count": len(keys),
+    }
+
+
 def _workload_secret_references(manifest: dict[str, Any]) -> list[tuple[str, str]]:
     spec = manifest.get("spec", {})
     if not isinstance(spec, dict):
@@ -856,9 +1014,22 @@ def _secret_inventory(
     repo_root: pathlib.Path,
     *,
     workload: str | None = None,
+    target: str = "local",
+    namespace: str | None = None,
+    kubernetes_secret: str = "moiraweave-secrets",
+    kubernetes_keys: set[str] | None = None,
+    kubernetes_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    normalized_target = "kubernetes" if target == "k8s" else target
     available_env = set(os.environ)
     available_dotenv = _dotenv_keys(repo_root)
+    resolved_namespace = namespace or "moiraweave"
+    if normalized_target == "kubernetes" and kubernetes_keys is None:
+        kubernetes_keys, kubernetes_status = _kubernetes_secret_keys(
+            resolved_namespace,
+            kubernetes_secret,
+        )
+    available_kubernetes = kubernetes_keys or set()
     inventory: dict[str, dict[str, Any]] = {}
     for manifest in manifests:
         workload_name = _workload_name(manifest)
@@ -874,27 +1045,42 @@ def _secret_inventory(
 
     secrets = []
     for name, data in sorted(inventory.items()):
-        source = "missing"
+        local_source = None
         if name in available_env:
-            source = "environment"
+            local_source = "environment"
         elif name in available_dotenv:
-            source = ".env"
+            local_source = ".env"
+        source = "missing"
+        if normalized_target == "kubernetes":
+            if name in available_kubernetes:
+                source = f"kubernetes:{resolved_namespace}/{kubernetes_secret}"
+        else:
+            source = local_source or "missing"
         secrets.append(
             {
                 "name": name,
                 "present": source != "missing",
                 "source": source,
+                "local_source": local_source,
                 "workloads": sorted(data["workloads"]),
                 "references": sorted(data["references"]),
             }
         )
     missing = sum(1 for item in secrets if not item["present"])
-    return {
+    result: dict[str, Any] = {
         "status": "warning" if missing else "passed",
+        "target": normalized_target,
         "total": len(secrets),
         "missing": missing,
         "secrets": secrets,
     }
+    if normalized_target == "kubernetes":
+        result["kubernetes"] = kubernetes_status or {
+            "status": "not_checked",
+            "namespace": resolved_namespace,
+            "secret": kubernetes_secret,
+        }
+    return result
 
 
 def _missing_required_env(
@@ -2480,20 +2666,53 @@ def secrets_list(
         "-w",
         help="Filter by workload name.",
     ),
+    target: str = typer.Option(
+        "local",
+        "--target",
+        help="Secret target to inspect: local or kubernetes.",
+    ),
+    env: str = typer.Option(
+        "dev",
+        "--env",
+        help="Environment used to resolve Kubernetes namespace.",
+    ),
+    namespace: str | None = typer.Option(
+        None,
+        "--namespace",
+        help="Kubernetes namespace. Overrides environment namespace.",
+    ),
+    kubernetes_secret: str = typer.Option(
+        "moiraweave-secrets",
+        "--kubernetes-secret",
+        help="Kubernetes Secret containing workload secret keys.",
+    ),
     check: bool = typer.Option(
         False,
         "--check",
         help="Exit with code 2 when required secrets are missing.",
     ),
 ) -> None:
-    """List required secret names and whether they are configured locally."""
+    """List required secret names without exposing secret values."""
     repo_root = _repo_root()
     manifests = _load_workload_manifests(repo_root)
     if workload and workload not in {
         _workload_name(manifest) for manifest in manifests
     }:
         _exit_with_error(f"Unknown workload: {workload}")
-    inventory = _secret_inventory(manifests, repo_root, workload=workload)
+    normalized_target = "kubernetes" if target == "k8s" else target
+    if normalized_target not in {"local", "kubernetes"}:
+        _exit_with_error("--target must be local or kubernetes")
+    resolved_namespace = namespace
+    if normalized_target == "kubernetes" and not resolved_namespace:
+        resolved_namespace = _environment_namespace(repo_root, env)
+    inventory = _secret_inventory(
+        manifests,
+        repo_root,
+        workload=workload,
+        target=normalized_target,
+        namespace=resolved_namespace,
+        kubernetes_secret=kubernetes_secret,
+    )
     console.print(Syntax(json.dumps(inventory, indent=2), "json"))
     if check and inventory["missing"]:
         raise typer.Exit(code=2)
@@ -3054,9 +3273,7 @@ def deploy_k8s(
     output.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
     ui.success(f"Generated {output.relative_to(repo_root)}")
     if apply:
-        config = load_moiraweave_config(repo_root)
-        target = config.environments.get(env)
-        namespace = target.namespace if target and target.namespace else "moiraweave"
+        namespace = _environment_namespace(repo_root, env)
         ui.info(
             _run_command(
                 [
@@ -3082,6 +3299,302 @@ def deploy_k8s(
             status="applied" if apply else "generated",
             api_url=api_url,
         )
+
+
+def _fetch_workload_manifest(api_url: str, workload_name: str) -> dict[str, Any]:
+    response = _request_json(
+        "GET",
+        f"{api_url.rstrip('/')}/v1/workloads/{quote(workload_name, safe='')}",
+    )
+    manifest = response.get("manifest")
+    if not isinstance(manifest, dict):
+        _exit_with_error(
+            f"Workload {workload_name!r} did not include a manifest response."
+        )
+    return manifest
+
+
+def _controller_workload_manifests(
+    *,
+    api_url: str,
+    workload_name: str,
+    repo_root: pathlib.Path,
+) -> list[dict[str, Any]]:
+    local_manifests = _load_workload_manifests(repo_root)
+    matched = [
+        manifest
+        for manifest in local_manifests
+        if _workload_name(manifest) == workload_name
+    ]
+    if matched:
+        return matched
+    return [_fetch_workload_manifest(api_url, workload_name)]
+
+
+def _kubernetes_controller_command(
+    operation: dict[str, Any],
+    *,
+    api_url: str,
+    repo_root: pathlib.Path,
+    chart_ref: str,
+    namespace: str | None,
+    release: str,
+) -> tuple[list[str], pathlib.Path]:
+    action = str(operation.get("action") or "")
+    workload_name = str(operation.get("workload_name") or "")
+    env = str(operation.get("env") or "dev")
+    resolved_namespace = namespace or _environment_namespace(repo_root, env)
+
+    if action == "apply":
+        manifests = _controller_workload_manifests(
+            api_url=api_url,
+            workload_name=workload_name,
+            repo_root=repo_root,
+        )
+        values = _render_helm_values(manifests)
+        deploy_root = _deploy_root(repo_root)
+        deploy_root.mkdir(parents=True, exist_ok=True)
+        output = deploy_root / f"values-workloads-{env}.yaml"
+        output.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+        return (
+            [
+                "helm",
+                "upgrade",
+                "--install",
+                release,
+                chart_ref,
+                "--namespace",
+                resolved_namespace,
+                "--create-namespace",
+                "-f",
+                str(output),
+            ],
+            repo_root,
+        )
+
+    if action == "logs":
+        return (
+            [
+                "kubectl",
+                "logs",
+                "-n",
+                resolved_namespace,
+                "-l",
+                f"moiraweave.io/workload={workload_name}",
+                "--tail",
+                "200",
+            ],
+            repo_root,
+        )
+
+    if action == "undeploy":
+        return (
+            [
+                "kubectl",
+                "delete",
+                "deployment,service,persistentvolumeclaim",
+                "-n",
+                resolved_namespace,
+                "-l",
+                f"moiraweave.io/workload={workload_name}",
+                "--ignore-not-found=true",
+            ],
+            repo_root,
+        )
+
+    _exit_with_error(
+        f"Unsupported deployment controller action: {action}",
+        hint="Supported controller actions are apply, logs, and undeploy.",
+    )
+
+
+def _run_deployment_controller_operation(
+    operation: dict[str, Any],
+    *,
+    api_url: str,
+    repo_root: pathlib.Path,
+    chart_ref: str,
+    namespace: str | None,
+    release: str,
+) -> bool:
+    operation_id = str(operation["operation_id"])
+    command, cwd = _kubernetes_controller_command(
+        operation,
+        api_url=api_url,
+        repo_root=repo_root,
+        chart_ref=chart_ref,
+        namespace=namespace,
+        release=release,
+    )
+    _append_deployment_operation_event(
+        api_url,
+        operation_id,
+        "controller.command",
+        f"Running: {' '.join(command)}",
+        data={"command": command},
+    )
+    returncode, output = _run_controller_command(command, cwd=cwd)
+    output_tail = output[-4000:]
+    if output_tail:
+        _append_deployment_operation_event(
+            api_url,
+            operation_id,
+            "controller.output",
+            output_tail,
+            data={"returncode": returncode},
+        )
+
+    if returncode == 0:
+        _complete_deployment_operation(
+            api_url,
+            operation_id,
+            status="succeeded",
+            message="Deployment controller operation completed successfully.",
+            metadata={"command": command, "returncode": returncode},
+        )
+        return True
+
+    _complete_deployment_operation(
+        api_url,
+        operation_id,
+        status="failed",
+        message="Deployment controller command failed.",
+        metadata={"command": command, "returncode": returncode, "output": output_tail},
+    )
+    return False
+
+
+def _run_deployment_controller_once(
+    *,
+    api_url: str,
+    target: str,
+    env: str,
+    controller_id: str,
+    limit: int,
+    repo_root: pathlib.Path,
+    chart_ref: str,
+    namespace: str | None,
+    release: str,
+) -> tuple[int, int]:
+    operations = _list_controller_operations(
+        api_url, target=target, env=env, limit=limit
+    )
+    processed = 0
+    failed = 0
+    for operation in operations:
+        operation_id = str(operation["operation_id"])
+        ui.info(f"Claiming deployment operation {operation_id}")
+        claimed = _claim_deployment_operation(
+            api_url, operation_id, controller_id=controller_id
+        )
+        processed += 1
+        if _run_deployment_controller_operation(
+            claimed,
+            api_url=api_url,
+            repo_root=repo_root,
+            chart_ref=chart_ref,
+            namespace=namespace,
+            release=release,
+        ):
+            ui.success(f"Deployment operation {operation_id} succeeded")
+        else:
+            failed += 1
+            ui.error(f"Deployment operation {operation_id} failed")
+    return processed, failed
+
+
+@deploy_controller_app.command("run")
+def deploy_controller_run(
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    env: str = typer.Option("dev", "--env", help="Deployment environment to watch."),
+    target: str = typer.Option(
+        "kubernetes",
+        "--target",
+        help="Deployment target. Currently only kubernetes is executable.",
+    ),
+    controller_id: str | None = typer.Option(
+        None,
+        "--controller-id",
+        help="Stable controller identity shown in deployment operation events.",
+    ),
+    limit: int = typer.Option(
+        5,
+        "--limit",
+        min=1,
+        max=50,
+        help="Maximum queued operations to claim per poll.",
+    ),
+    watch: bool = typer.Option(
+        False,
+        "--watch",
+        help="Keep polling instead of running one batch.",
+    ),
+    poll_interval: float = typer.Option(
+        5.0,
+        "--poll-interval",
+        min=0.5,
+        help="Seconds between polls when --watch is enabled.",
+    ),
+    chart_ref: str = typer.Option(
+        "infra/helm/moiraweave",
+        "--chart-ref",
+        envvar="MOIRAWEAVE_HELM_CHART_REF",
+        help="Helm chart path or OCI reference used for apply operations.",
+    ),
+    namespace: str | None = typer.Option(
+        None,
+        "--namespace",
+        envvar="MOIRAWEAVE_K8S_NAMESPACE",
+        help="Kubernetes namespace override for apply, logs, and undeploy.",
+    ),
+    release: str = typer.Option(
+        "moiraweave",
+        "--release",
+        envvar="MOIRAWEAVE_HELM_RELEASE",
+        help="Helm release name used for apply operations.",
+    ),
+    repo_root: pathlib.Path | None = typer.Option(
+        None,
+        "--repo-root",
+        help="Workspace root for local manifests; defaults to current workspace or cwd.",
+    ),
+) -> None:
+    """Claim and execute queued Kubernetes deployment operations."""
+    if target != "kubernetes":
+        _exit_with_error("Only target=kubernetes is supported by this controller.")
+    resolved_repo_root = (
+        repo_root or _maybe_repo_root() or pathlib.Path.cwd()
+    ).resolve()
+    resolved_controller_id = (controller_id or f"{socket.gethostname()}-{os.getpid()}")[
+        :128
+    ]
+
+    total_processed = 0
+    total_failed = 0
+    while True:
+        processed, failed = _run_deployment_controller_once(
+            api_url=api_url,
+            target=target,
+            env=env,
+            controller_id=resolved_controller_id,
+            limit=limit,
+            repo_root=resolved_repo_root,
+            chart_ref=chart_ref,
+            namespace=namespace,
+            release=release,
+        )
+        total_processed += processed
+        total_failed += failed
+        if not watch:
+            break
+        if processed == 0:
+            ui.info("No queued deployment operations found.")
+        time.sleep(poll_interval)
+
+    if total_processed == 0:
+        ui.info("No queued deployment operations found.")
+    if total_failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()

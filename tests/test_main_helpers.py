@@ -26,6 +26,7 @@ _missing_required_env = MAIN_MODULE._missing_required_env
 _parse_json_input = MAIN_MODULE._parse_json_input
 _ready_response_status = MAIN_MODULE._ready_response_status
 _render_local_workload_compose = MAIN_MODULE._render_local_workload_compose
+_kubernetes_secret_keys = MAIN_MODULE._kubernetes_secret_keys
 _secret_inventory = MAIN_MODULE._secret_inventory
 _wait_for_url_reachable = MAIN_MODULE._wait_for_url_reachable
 
@@ -227,6 +228,79 @@ def test_secret_inventory_includes_runtime_requirement_secrets(
         "hermes:spec.agent.runtimeRequirements.browser.requiredSecrets"
         in items["BROWSER_USE_API_KEY"]["references"]
     )
+
+
+def test_secret_inventory_can_check_kubernetes_secret_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kubernetes target checks Secret keys instead of local env values."""
+    monkeypatch.setenv("HERMES_API_SERVER_KEY", "local-only")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    manifest = _agent_template_manifest("hermes")
+
+    inventory = _secret_inventory(
+        [manifest],
+        tmp_path,
+        target="kubernetes",
+        namespace="moiraweave-dev",
+        kubernetes_secret="moiraweave-secrets",
+        kubernetes_keys={"OPENAI_API_KEY"},
+        kubernetes_status={"status": "available"},
+    )
+
+    items = {item["name"]: item for item in inventory["secrets"]}
+    assert inventory["target"] == "kubernetes"
+    assert items["OPENAI_API_KEY"]["present"] is True
+    assert (
+        items["OPENAI_API_KEY"]["source"]
+        == "kubernetes:moiraweave-dev/moiraweave-secrets"
+    )
+    assert items["HERMES_API_SERVER_KEY"]["present"] is False
+    assert items["HERMES_API_SERVER_KEY"]["source"] == "missing"
+    assert items["HERMES_API_SERVER_KEY"]["local_source"] == "environment"
+
+
+def test_kubernetes_secret_keys_exposes_names_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """kubectl Secret inspection never decodes or returns secret values."""
+
+    class Result:
+        returncode = 0
+        stdout = json.dumps(
+            {
+                "data": {
+                    "OPENAI_API_KEY": "c2stdmFsdWU=",
+                    "HERMES_API_SERVER_KEY": "aGVybWVzLXRva2Vu",
+                }
+            }
+        )
+        stderr = ""
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        assert command == [
+            "kubectl",
+            "get",
+            "secret",
+            "moiraweave-secrets",
+            "-n",
+            "moiraweave-dev",
+            "-o",
+            "json",
+        ]
+        assert kwargs["capture_output"] is True
+        return Result()
+
+    monkeypatch.setattr(MAIN_MODULE.subprocess, "run", fake_run)
+
+    keys, metadata = _kubernetes_secret_keys("moiraweave-dev", "moiraweave-secrets")
+
+    assert keys == {"OPENAI_API_KEY", "HERMES_API_SERVER_KEY"}
+    assert metadata["key_count"] == 2
+    serialized = json.dumps((sorted(keys), metadata))
+    assert "sk-value" not in serialized
+    assert "hermes-token" not in serialized
 
 
 def test_doctor_action_guide_turns_missing_secrets_into_commands(
