@@ -909,6 +909,60 @@ def _dotenv_keys(repo_root: pathlib.Path) -> set[str]:
     return set(_dotenv_values(repo_root))
 
 
+def _kubernetes_secret_keys(
+    namespace: str,
+    secret_name: str,
+) -> tuple[set[str], dict[str, Any]]:
+    command = [
+        "kubectl",
+        "get",
+        "secret",
+        secret_name,
+        "-n",
+        namespace,
+        "-o",
+        "json",
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return set(), {
+            "status": "unavailable",
+            "namespace": namespace,
+            "secret": secret_name,
+            "message": "kubectl was not found in PATH.",
+        }
+    if proc.returncode != 0:
+        return set(), {
+            "status": "unavailable",
+            "namespace": namespace,
+            "secret": secret_name,
+            "message": proc.stderr.strip() or "kubectl could not read the Secret.",
+        }
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return set(), {
+            "status": "unavailable",
+            "namespace": namespace,
+            "secret": secret_name,
+            "message": "kubectl returned invalid JSON for the Secret.",
+        }
+    data = payload.get("data") if isinstance(payload, dict) else None
+    keys = set(data) if isinstance(data, dict) else set()
+    return keys, {
+        "status": "available",
+        "namespace": namespace,
+        "secret": secret_name,
+        "key_count": len(keys),
+    }
+
+
 def _workload_secret_references(manifest: dict[str, Any]) -> list[tuple[str, str]]:
     spec = manifest.get("spec", {})
     if not isinstance(spec, dict):
@@ -957,9 +1011,22 @@ def _secret_inventory(
     repo_root: pathlib.Path,
     *,
     workload: str | None = None,
+    target: str = "local",
+    namespace: str | None = None,
+    kubernetes_secret: str = "moiraweave-secrets",
+    kubernetes_keys: set[str] | None = None,
+    kubernetes_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    normalized_target = "kubernetes" if target == "k8s" else target
     available_env = set(os.environ)
     available_dotenv = _dotenv_keys(repo_root)
+    resolved_namespace = namespace or "moiraweave"
+    if normalized_target == "kubernetes" and kubernetes_keys is None:
+        kubernetes_keys, kubernetes_status = _kubernetes_secret_keys(
+            resolved_namespace,
+            kubernetes_secret,
+        )
+    available_kubernetes = kubernetes_keys or set()
     inventory: dict[str, dict[str, Any]] = {}
     for manifest in manifests:
         workload_name = _workload_name(manifest)
@@ -975,27 +1042,42 @@ def _secret_inventory(
 
     secrets = []
     for name, data in sorted(inventory.items()):
-        source = "missing"
+        local_source = None
         if name in available_env:
-            source = "environment"
+            local_source = "environment"
         elif name in available_dotenv:
-            source = ".env"
+            local_source = ".env"
+        source = "missing"
+        if normalized_target == "kubernetes":
+            if name in available_kubernetes:
+                source = f"kubernetes:{resolved_namespace}/{kubernetes_secret}"
+        else:
+            source = local_source or "missing"
         secrets.append(
             {
                 "name": name,
                 "present": source != "missing",
                 "source": source,
+                "local_source": local_source,
                 "workloads": sorted(data["workloads"]),
                 "references": sorted(data["references"]),
             }
         )
     missing = sum(1 for item in secrets if not item["present"])
-    return {
+    result: dict[str, Any] = {
         "status": "warning" if missing else "passed",
+        "target": normalized_target,
         "total": len(secrets),
         "missing": missing,
         "secrets": secrets,
     }
+    if normalized_target == "kubernetes":
+        result["kubernetes"] = kubernetes_status or {
+            "status": "not_checked",
+            "namespace": resolved_namespace,
+            "secret": kubernetes_secret,
+        }
+    return result
 
 
 def _missing_required_env(
@@ -2581,20 +2663,53 @@ def secrets_list(
         "-w",
         help="Filter by workload name.",
     ),
+    target: str = typer.Option(
+        "local",
+        "--target",
+        help="Secret target to inspect: local or kubernetes.",
+    ),
+    env: str = typer.Option(
+        "dev",
+        "--env",
+        help="Environment used to resolve Kubernetes namespace.",
+    ),
+    namespace: str | None = typer.Option(
+        None,
+        "--namespace",
+        help="Kubernetes namespace. Overrides environment namespace.",
+    ),
+    kubernetes_secret: str = typer.Option(
+        "moiraweave-secrets",
+        "--kubernetes-secret",
+        help="Kubernetes Secret containing workload secret keys.",
+    ),
     check: bool = typer.Option(
         False,
         "--check",
         help="Exit with code 2 when required secrets are missing.",
     ),
 ) -> None:
-    """List required secret names and whether they are configured locally."""
+    """List required secret names without exposing secret values."""
     repo_root = _repo_root()
     manifests = _load_workload_manifests(repo_root)
     if workload and workload not in {
         _workload_name(manifest) for manifest in manifests
     }:
         _exit_with_error(f"Unknown workload: {workload}")
-    inventory = _secret_inventory(manifests, repo_root, workload=workload)
+    normalized_target = "kubernetes" if target == "k8s" else target
+    if normalized_target not in {"local", "kubernetes"}:
+        _exit_with_error("--target must be local or kubernetes")
+    resolved_namespace = namespace
+    if normalized_target == "kubernetes" and not resolved_namespace:
+        resolved_namespace = _environment_namespace(repo_root, env)
+    inventory = _secret_inventory(
+        manifests,
+        repo_root,
+        workload=workload,
+        target=normalized_target,
+        namespace=resolved_namespace,
+        kubernetes_secret=kubernetes_secret,
+    )
     console.print(Syntax(json.dumps(inventory, indent=2), "json"))
     if check and inventory["missing"]:
         raise typer.Exit(code=2)
