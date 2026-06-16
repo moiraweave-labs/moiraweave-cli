@@ -726,3 +726,147 @@ class TestCLIDeployRegistration:
         assert calls[1][2]["target"] == "external"
         assert calls[1][2]["env"] == "local"
         assert calls[1][2]["endpoint"] == "https://agents.example.com/hermes"
+
+    def test_deployment_controller_claims_and_completes_apply(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        events: list[tuple[str, str, str, dict[str, object] | None]] = []
+        completions: list[tuple[str, str, str, dict[str, object] | None]] = []
+        commands: list[list[str]] = []
+        operation = {
+            "operation_id": "op-1",
+            "action": "apply",
+            "workload_name": "hermes",
+            "target": "kubernetes",
+            "env": "dev",
+        }
+
+        monkeypatch.setattr(
+            cli_main,
+            "_list_controller_operations",
+            lambda *_args, **_kwargs: [operation],
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_claim_deployment_operation",
+            lambda *_args, **_kwargs: operation,
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_load_workload_manifests",
+            lambda _repo_root: [{"metadata": {"name": "hermes"}, "spec": {}}],
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_render_helm_values",
+            lambda _manifests: {"workloads": [{"name": "hermes"}]},
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_environment_namespace",
+            lambda _repo_root, _env: "moiraweave-dev",
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_append_deployment_operation_event",
+            lambda api_url, operation_id, event_type, message, data=None: events.append(
+                (api_url, operation_id, event_type, data)
+            ),
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_complete_deployment_operation",
+            lambda api_url, operation_id, status, message, metadata=None: (
+                completions.append((api_url, operation_id, status, metadata)) or {}
+            ),
+        )
+
+        def fake_run(command: list[str], cwd: Path | None = None) -> tuple[int, str]:
+            del cwd
+            commands.append(command)
+            return 0, "release upgraded"
+
+        monkeypatch.setattr(cli_main, "_run_controller_command", fake_run)
+
+        processed, failed = cli_main._run_deployment_controller_once(
+            api_url="http://api:8000",
+            target="kubernetes",
+            env="dev",
+            controller_id="controller-1",
+            limit=5,
+            repo_root=tmp_path,
+        )
+
+        assert (processed, failed) == (1, 0)
+        assert commands == [
+            [
+                "helm",
+                "upgrade",
+                "--install",
+                "moiraweave",
+                "infra/helm/moiraweave",
+                "--namespace",
+                "moiraweave-dev",
+                "--create-namespace",
+                "-f",
+                str(tmp_path / ".moiraweave" / "deploy" / "values-workloads-dev.yaml"),
+            ]
+        ]
+        assert events[0][2] == "controller.command"
+        assert events[1][2] == "controller.output"
+        assert completions == [
+            (
+                "http://api:8000",
+                "op-1",
+                "succeeded",
+                {"command": commands[0], "returncode": 0},
+            )
+        ]
+
+    def test_deployment_controller_completes_failed_command(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        completions: list[tuple[str, str, dict[str, object] | None]] = []
+        operation = {
+            "operation_id": "op-2",
+            "action": "logs",
+            "workload_name": "hermes",
+            "target": "kubernetes",
+            "env": "dev",
+        }
+
+        monkeypatch.setattr(
+            cli_main,
+            "_environment_namespace",
+            lambda _repo_root, _env: "moiraweave-dev",
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_append_deployment_operation_event",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_complete_deployment_operation",
+            lambda _api_url, operation_id, status, message, metadata=None: (
+                completions.append((status, operation_id, metadata)) or {}
+            ),
+        )
+        monkeypatch.setattr(
+            cli_main,
+            "_run_controller_command",
+            lambda _command, cwd=None: (1, "pods not found"),
+        )
+
+        ok = cli_main._run_deployment_controller_operation(
+            operation,
+            api_url="http://api:8000",
+            repo_root=tmp_path,
+        )
+
+        assert ok is False
+        assert completions[0][0] == "failed"
+        assert completions[0][1] == "op-2"
+        assert completions[0][2] is not None
+        assert completions[0][2]["returncode"] == 1
+        assert completions[0][2]["output"] == "pods not found"

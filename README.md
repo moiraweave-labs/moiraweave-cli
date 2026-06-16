@@ -88,6 +88,7 @@ artifacts through the adapter.
 - `moira agent session create|message|history`: interact with agent sessions.
 - `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.
 - `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
+- `moira deploy controller run`: claim queued Kubernetes deployment operations and execute Helm/kubectl outside the UI.
 - `moira env list`: inspect environment-scoped deployment and operation counts.
 - `moira security me`: show the current subject, role, credential type, and team scope.
 - `moira security user list|create|disable`: manage persistent users.
