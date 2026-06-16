@@ -60,6 +60,10 @@ Transient registry timeouts, 429s, or temporary GHCR issues are reported as
 warnings by `moira doctor`; private, missing, or denied images remain blocking
 errors.
 
+The CLI also publishes `ghcr.io/moiraweave-labs/moiraweave-cli:latest`. That
+image includes `moira`, Helm, and `kubectl` so it can run the Kubernetes
+deployment controller inside a cluster, CI runner, or operator shell.
+
 Start from another agent template when you want the first run to be a real
 runtime instead of the demo:
 
