@@ -2859,7 +2859,9 @@ def security_user_update(
 ) -> None:
     """Update mutable user metadata without changing credentials."""
     if role is None and display_name is None:
-        _exit_with_error("No user changes supplied", hint="Use --role or --display-name")
+        _exit_with_error(
+            "No user changes supplied", hint="Use --role or --display-name"
+        )
     payload: dict[str, Any] = {"display_name": display_name}
     if role is not None:
         payload["role"] = _validate_role(role)
@@ -3247,12 +3249,16 @@ def run_dead_letter_replay(
 @ops_app.command("alerts")
 def ops_alerts(
     env: str | None = typer.Option(None, "--env", help="Filter by environment."),
-    scope: str = typer.Option("mine", "--scope", help="mine or all. all requires admin."),
+    scope: str = typer.Option(
+        "mine", "--scope", help="mine or all. all requires admin."
+    ),
     api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
     json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
 ) -> None:
     """Show actionable platform operations alerts."""
-    query = urlencode({key: value for key, value in {"env": env, "scope": scope}.items() if value})
+    query = urlencode(
+        {key: value for key, value in {"env": env, "scope": scope}.items() if value}
+    )
     suffix = f"?{query}" if query else ""
     response = _request_json("GET", f"{api_url}/v1/operations/alerts{suffix}")
     if json_output:
