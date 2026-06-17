@@ -95,17 +95,19 @@ moira secrets list --target kubernetes --env dev --kubernetes-secret moiraweave-
 - `moira demo agent`: create a no-secret mock agent workload.
 - `moira workload new|list|show|deploy|status|preflight|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
-- `moira run dead-letter list|purge`: inspect and clean failed dispatch messages.
+- `moira run dead-letter list|replay|purge`: inspect, recover, or clean failed dispatch messages.
 - `moira agent chat`: create a session if needed and send one message.
 - `moira agent session create|message|history`: interact with agent sessions.
 - `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.
 - `moira deploy local|k8s`: generate Compose or Helm values from workload manifests.
 - `moira deploy controller run`: claim queued Kubernetes deployment operations and execute Helm/kubectl outside the UI.
 - `moira env list`: inspect environment-scoped deployment and operation counts.
+- `moira ops alerts`: inspect actionable retry, lost-run, dead-letter, and deployment-operation alerts.
 - `moira secrets list`: inspect required secret names from local `.env`, shell environment, or Kubernetes Secret keys.
 - `moira security me`: show the current subject, role, credential type, and team scope.
-- `moira security user list|create|disable`: manage persistent users.
-- `moira security team list|create|members|add-member|remove-member`: manage teams and memberships.
+- `moira security bootstrap-admin`: create the first persistent admin when demo auth is disabled.
+- `moira security user list|create|update|enable|disable|password-change|password-reset`: manage persistent users.
+- `moira security team list|create|update|members|add-member|remove-member`: manage teams and memberships.
 - `moira security api-key list|create|rotate|revoke`: manage hashed API keys; create and rotate print one-time secrets.
 
 Use `--channel` for channels MoiraWeave owns through its API gateway. Use

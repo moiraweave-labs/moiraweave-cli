@@ -93,6 +93,7 @@ security_user_app = typer.Typer(help="Manage users")
 security_team_app = typer.Typer(help="Manage teams")
 security_api_key_app = typer.Typer(help="Manage API keys")
 env_app = typer.Typer(help="Inspect deployment environments")
+ops_app = typer.Typer(help="Inspect operational alerts")
 
 
 class DockerImageAvailability:
@@ -120,6 +121,7 @@ app.add_typer(demo_app, name="demo")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(security_app, name="security")
 app.add_typer(env_app, name="env")
+app.add_typer(ops_app, name="ops")
 agent_app.add_typer(agent_session_app, name="session")
 security_app.add_typer(security_user_app, name="user")
 security_app.add_typer(security_team_app, name="team")
@@ -2765,6 +2767,36 @@ def security_me(
     )
 
 
+@security_app.command("bootstrap-admin")
+def security_bootstrap_admin(
+    subject: str = typer.Argument(..., help="First persistent admin subject."),
+    password: str = typer.Option(
+        ...,
+        "--password",
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help="Initial admin password, minimum 12 characters.",
+    ),
+    display_name: str | None = typer.Option(None, "--display-name"),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Create the first admin when demo auth is disabled."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/auth/bootstrap/admin",
+        {
+            "subject": subject,
+            "password": password,
+            "display_name": display_name,
+        },
+        retry_local_login=False,
+    )
+    ui.success(f"Bootstrapped admin {response.get('subject', subject)}")
+    ui.warning("Store this access token or run moira security api-key create next.")
+    _print_json(response)
+
+
 @security_user_app.command("list")
 def security_user_list(
     api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
@@ -2818,6 +2850,79 @@ def security_user_create(
     _print_json(response)
 
 
+@security_user_app.command("update")
+def security_user_update(
+    subject: str = typer.Argument(..., help="Login subject to update."),
+    role: str | None = typer.Option(None, "--role", help="admin, operator, or viewer."),
+    display_name: str | None = typer.Option(None, "--display-name"),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Update mutable user metadata without changing credentials."""
+    if role is None and display_name is None:
+        _exit_with_error("No user changes supplied", hint="Use --role or --display-name")
+    payload: dict[str, Any] = {"display_name": display_name}
+    if role is not None:
+        payload["role"] = _validate_role(role)
+    response = _request_json("PATCH", f"{api_url}/auth/users/{subject}", payload)
+    ui.success(f"Updated user {response.get('subject', subject)}")
+    _print_json(response)
+
+
+@security_user_app.command("password-change")
+def security_user_password_change(
+    subject: str = typer.Argument(..., help="Your own login subject."),
+    current_password: str = typer.Option(
+        ...,
+        "--current-password",
+        prompt=True,
+        hide_input=True,
+        help="Current password.",
+    ),
+    new_password: str = typer.Option(
+        ...,
+        "--new-password",
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help="New password, minimum 12 characters.",
+    ),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Change your own persistent user password."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/auth/users/{subject}/password/change",
+        {
+            "current_password": current_password,
+            "new_password": new_password,
+        },
+    )
+    ui.success(f"Changed password for {response.get('subject', subject)}")
+
+
+@security_user_app.command("password-reset")
+def security_user_password_reset(
+    subject: str = typer.Argument(..., help="Login subject to reset."),
+    new_password: str = typer.Option(
+        ...,
+        "--new-password",
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help="New password, minimum 12 characters.",
+    ),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Reset a user password as an admin."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/auth/users/{subject}/password/reset",
+        {"new_password": new_password},
+    )
+    ui.success(f"Reset password for {response.get('subject', subject)}")
+    _print_json(response)
+
+
 @security_user_app.command("disable")
 def security_user_disable(
     subject: str = typer.Argument(..., help="Login subject to disable."),
@@ -2826,6 +2931,17 @@ def security_user_disable(
     """Disable a user without deleting audit metadata."""
     response = _request_json("DELETE", f"{api_url}/auth/users/{subject}")
     ui.success(f"Disabled user {response.get('subject', subject)}")
+    _print_json(response)
+
+
+@security_user_app.command("enable")
+def security_user_enable(
+    subject: str = typer.Argument(..., help="Login subject to enable."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Enable a disabled user."""
+    response = _request_json("POST", f"{api_url}/auth/users/{subject}/enable")
+    ui.success(f"Enabled user {response.get('subject', subject)}")
     _print_json(response)
 
 
@@ -2865,6 +2981,25 @@ def security_team_create(
         {"team_id": team_id, "name": name, "description": description},
     )
     ui.success(f"Saved team {response.get('team_id', team_id)}")
+    _print_json(response)
+
+
+@security_team_app.command("update")
+def security_team_update(
+    team_id: str = typer.Argument(..., help="Stable team id."),
+    name: str | None = typer.Option(None, "--name", help="Display name."),
+    description: str | None = typer.Option(None, "--description"),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Update team metadata."""
+    if name is None and description is None:
+        _exit_with_error("No team changes supplied", hint="Use --name or --description")
+    response = _request_json(
+        "PATCH",
+        f"{api_url}/auth/teams/{team_id}",
+        {"name": name, "description": description},
+    )
+    ui.success(f"Updated team {response.get('team_id', team_id)}")
     _print_json(response)
 
 
@@ -3089,6 +3224,51 @@ def run_dead_letter_purge(
     response = _request_json("DELETE", f"{api_url}/v1/runs/dead-letter/{message_id}")
     ui.success(f"Purged dead-letter entry {response.get('message_id', message_id)}")
     _print_json(response)
+
+
+@run_dead_letter_app.command("replay")
+def run_dead_letter_replay(
+    message_id: str = typer.Argument(..., help="Dead-letter stream message ID."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Replay one dead-letter entry after fixing the root cause."""
+    response = _request_json(
+        "POST",
+        f"{api_url}/v1/runs/dead-letter/{message_id}/replay",
+    )
+    ui.success(
+        "Replayed dead-letter entry "
+        f"{response.get('message_id', message_id)} as "
+        f"{response.get('replayed_message_id', '-')}"
+    )
+    _print_json(response)
+
+
+@ops_app.command("alerts")
+def ops_alerts(
+    env: str | None = typer.Option(None, "--env", help="Filter by environment."),
+    scope: str = typer.Option("mine", "--scope", help="mine or all. all requires admin."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """Show actionable platform operations alerts."""
+    query = urlencode({key: value for key, value in {"env": env, "scope": scope}.items() if value})
+    suffix = f"?{query}" if query else ""
+    response = _request_json("GET", f"{api_url}/v1/operations/alerts{suffix}")
+    if json_output:
+        _print_json(response.get("data", response))
+        return
+    _print_records_table(
+        "MoiraWeave operations alerts",
+        [
+            ("severity", "Severity", "yellow"),
+            ("title", "Title", "cyan"),
+            ("detail", "Detail", "white"),
+            ("action", "Action", "white"),
+            ("command", "Command", "bright_black"),
+        ],
+        _response_items(response),
+    )
 
 
 @app.command()

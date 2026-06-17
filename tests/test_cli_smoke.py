@@ -473,6 +473,35 @@ class TestCLIRuns:
             )
         ]
 
+    def test_run_dead_letter_replay_posts_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {
+                "message_id": "1-0",
+                "replayed_message_id": "2-0",
+                "run_id": "run-1",
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.run_dead_letter_replay("1-0", api_url="http://api:8000")
+
+        assert calls == [
+            (
+                "POST",
+                "http://api:8000/v1/runs/dead-letter/1-0/replay",
+                None,
+            )
+        ]
+
 
 class TestCLIDefaults:
     def test_init_noninteractive_flag_recognized(
@@ -489,6 +518,47 @@ class TestCLIDefaults:
 
 
 class TestCLISecurity:
+    def test_security_bootstrap_admin_posts_bootstrap_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None, bool | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+            *,
+            retry_local_login: bool = True,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload, retry_local_login))
+            return {
+                "subject": "owner",
+                "role": "admin",
+                "access_token": "token",
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_bootstrap_admin(
+            "owner",
+            password="very-strong-password",
+            display_name="Owner",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "POST",
+                "http://api:8000/auth/bootstrap/admin",
+                {
+                    "subject": "owner",
+                    "password": "very-strong-password",
+                    "display_name": "Owner",
+                },
+                False,
+            )
+        ]
+
     def test_security_user_create_posts_user_payload(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -526,6 +596,111 @@ class TestCLISecurity:
                     "role": "operator",
                     "display_name": "Alice Operator",
                 },
+            )
+        ]
+
+    def test_security_user_update_patches_metadata(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"subject": "alice", "role": "viewer"}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_user_update(
+            "alice",
+            role="viewer",
+            display_name="Alice Viewer",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "PATCH",
+                "http://api:8000/auth/users/alice",
+                {"display_name": "Alice Viewer", "role": "viewer"},
+            )
+        ]
+
+    def test_security_user_password_and_enable_commands(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"subject": "alice", "role": "operator"}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_user_password_change(
+            "alice",
+            current_password="correct-horse",
+            new_password="new-correct-horse",
+            api_url="http://api:8000",
+        )
+        cli_main.security_user_password_reset(
+            "alice",
+            new_password="reset-correct-horse",
+            api_url="http://api:8000",
+        )
+        cli_main.security_user_enable("alice", api_url="http://api:8000")
+
+        assert calls == [
+            (
+                "POST",
+                "http://api:8000/auth/users/alice/password/change",
+                {
+                    "current_password": "correct-horse",
+                    "new_password": "new-correct-horse",
+                },
+            ),
+            (
+                "POST",
+                "http://api:8000/auth/users/alice/password/reset",
+                {"new_password": "reset-correct-horse"},
+            ),
+            ("POST", "http://api:8000/auth/users/alice/enable", None),
+        ]
+
+    def test_security_team_update_patches_metadata(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"team_id": "agents", "name": "Agent Platform"}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_team_update(
+            "agents",
+            name="Agent Platform",
+            description="Prod agent ops",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "PATCH",
+                "http://api:8000/auth/teams/agents",
+                {"name": "Agent Platform", "description": "Prod agent ops"},
             )
         ]
 
@@ -658,6 +833,46 @@ class TestCLISecurity:
         cli_main.environment_list(api_url="http://api:8000", json_output=False)
 
         assert calls == [("GET", "http://api:8000/v1/environments", None)]
+
+    def test_ops_alerts_fetches_operations_alerts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {
+                "data": [
+                    {
+                        "severity": "warning",
+                        "title": "Dead-letter messages need review",
+                        "detail": "1 message",
+                        "action": "Replay or purge",
+                        "command": "moira run dead-letter list",
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.ops_alerts(
+            env="prod",
+            scope="all",
+            api_url="http://api:8000",
+            json_output=False,
+        )
+
+        assert calls == [
+            (
+                "GET",
+                "http://api:8000/v1/operations/alerts?env=prod&scope=all",
+                None,
+            )
+        ]
 
 
 class TestCLIDeployRegistration:
