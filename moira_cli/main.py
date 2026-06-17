@@ -2906,6 +2906,21 @@ def security_team_add_member(
     _print_json(response)
 
 
+@security_team_app.command("remove-member")
+def security_team_remove_member(
+    team_id: str = typer.Argument(..., help="Team id."),
+    subject: str = typer.Argument(..., help="User subject."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Remove a member from a team."""
+    response = _request_json(
+        "DELETE",
+        f"{api_url}/auth/teams/{team_id}/members/{subject}",
+    )
+    ui.success(f"Removed {response.get('subject', subject)} from team {team_id}")
+    _print_json(response)
+
+
 @security_api_key_app.command("list")
 def security_api_key_list(
     api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),

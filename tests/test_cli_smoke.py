@@ -495,6 +495,35 @@ class TestCLISecurity:
             )
         ]
 
+    def test_security_team_remove_member_deletes_membership(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"team_id": "agents", "subject": "team-bot", "role": "operator"}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.security_team_remove_member(
+            "agents",
+            "team-bot",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "DELETE",
+                "http://api:8000/auth/teams/agents/members/team-bot",
+                None,
+            )
+        ]
+
     def test_security_api_key_create_posts_team_scope(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

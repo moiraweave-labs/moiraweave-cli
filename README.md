@@ -104,7 +104,7 @@ moira secrets list --target kubernetes --env dev --kubernetes-secret moiraweave-
 - `moira secrets list`: inspect required secret names from local `.env`, shell environment, or Kubernetes Secret keys.
 - `moira security me`: show the current subject, role, credential type, and team scope.
 - `moira security user list|create|disable`: manage persistent users.
-- `moira security team list|create|members|add-member`: manage teams and memberships.
+- `moira security team list|create|members|add-member|remove-member`: manage teams and memberships.
 - `moira security api-key list|create|rotate|revoke`: manage hashed API keys; create and rotate print one-time secrets.
 
 Use `--channel` for channels MoiraWeave owns through its API gateway. Use
