@@ -335,12 +335,32 @@ def _claim_deployment_operation(
     operation_id: str,
     *,
     controller_id: str,
+    lease_seconds: int = 300,
 ) -> dict[str, Any]:
     return _request_json(
         "POST",
         _deployment_operation_url(api_url, operation_id, "/claim"),
         {
             "controller_id": controller_id,
+            "lease_seconds": lease_seconds,
+            "metadata": {"client": "moira-cli", "mode": "deployment-controller"},
+        },
+    )
+
+
+def _heartbeat_deployment_operation(
+    api_url: str,
+    operation_id: str,
+    *,
+    controller_id: str,
+    lease_seconds: int = 300,
+) -> dict[str, Any]:
+    return _request_json(
+        "POST",
+        _deployment_operation_url(api_url, operation_id, "/heartbeat"),
+        {
+            "controller_id": controller_id,
+            "lease_seconds": lease_seconds,
             "metadata": {"client": "moira-cli", "mode": "deployment-controller"},
         },
     )
@@ -367,12 +387,23 @@ def _complete_deployment_operation(
     *,
     status: str,
     message: str,
+    stdout_summary: str | None = None,
+    stderr_summary: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": status,
+        "message": message,
+        "metadata": metadata or {},
+    }
+    if stdout_summary is not None:
+        payload["stdout_summary"] = stdout_summary
+    if stderr_summary is not None:
+        payload["stderr_summary"] = stderr_summary
     return _request_json(
         "POST",
         _deployment_operation_url(api_url, operation_id, "/complete"),
-        {"status": status, "message": message, "metadata": metadata or {}},
+        payload,
     )
 
 
@@ -3652,12 +3683,18 @@ def _run_deployment_controller_operation(
     operation: dict[str, Any],
     *,
     api_url: str,
+    controller_id: str,
     repo_root: pathlib.Path,
     chart_ref: str,
     namespace: str | None,
     release: str,
 ) -> bool:
     operation_id = str(operation["operation_id"])
+    _heartbeat_deployment_operation(
+        api_url,
+        operation_id,
+        controller_id=controller_id,
+    )
     command, cwd = _kubernetes_controller_command(
         operation,
         api_url=api_url,
@@ -3690,6 +3727,7 @@ def _run_deployment_controller_operation(
             operation_id,
             status="succeeded",
             message="Deployment controller operation completed successfully.",
+            stdout_summary=output_tail,
             metadata={"command": command, "returncode": returncode},
         )
         return True
@@ -3699,6 +3737,7 @@ def _run_deployment_controller_operation(
         operation_id,
         status="failed",
         message="Deployment controller command failed.",
+        stderr_summary=output_tail,
         metadata={"command": command, "returncode": returncode, "output": output_tail},
     )
     return False
@@ -3731,6 +3770,7 @@ def _run_deployment_controller_once(
         if _run_deployment_controller_operation(
             claimed,
             api_url=api_url,
+            controller_id=controller_id,
             repo_root=repo_root,
             chart_ref=chart_ref,
             namespace=namespace,

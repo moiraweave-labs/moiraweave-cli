@@ -1039,7 +1039,17 @@ class TestCLIDeployRegistration:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         events: list[tuple[str, str, str, dict[str, object] | None]] = []
-        completions: list[tuple[str, str, str, dict[str, object] | None]] = []
+        heartbeats: list[tuple[str, str, str]] = []
+        completions: list[
+            tuple[
+                str,
+                str,
+                str,
+                str | None,
+                str | None,
+                dict[str, object] | None,
+            ]
+        ] = []
         commands: list[list[str]] = []
         operation = {
             "operation_id": "op-1",
@@ -1076,6 +1086,13 @@ class TestCLIDeployRegistration:
         )
         monkeypatch.setattr(
             cli_main,
+            "_heartbeat_deployment_operation",
+            lambda api_url, operation_id, controller_id, **_kwargs: (
+                heartbeats.append((api_url, operation_id, controller_id)) or {}
+            ),
+        )
+        monkeypatch.setattr(
+            cli_main,
             "_append_deployment_operation_event",
             lambda api_url, operation_id, event_type, message, data=None: events.append(
                 (api_url, operation_id, event_type, data)
@@ -1084,8 +1101,18 @@ class TestCLIDeployRegistration:
         monkeypatch.setattr(
             cli_main,
             "_complete_deployment_operation",
-            lambda api_url, operation_id, status, message, metadata=None: (
-                completions.append((api_url, operation_id, status, metadata)) or {}
+            lambda api_url, operation_id, status, message, stdout_summary=None, stderr_summary=None, metadata=None: (
+                completions.append(
+                    (
+                        api_url,
+                        operation_id,
+                        status,
+                        stdout_summary,
+                        stderr_summary,
+                        metadata,
+                    )
+                )
+                or {}
             ),
         )
 
@@ -1109,6 +1136,7 @@ class TestCLIDeployRegistration:
         )
 
         assert (processed, failed) == (1, 0)
+        assert heartbeats == [("http://api:8000", "op-1", "controller-1")]
         assert commands == [
             [
                 "helm",
@@ -1130,6 +1158,8 @@ class TestCLIDeployRegistration:
                 "http://api:8000",
                 "op-1",
                 "succeeded",
+                "release upgraded",
+                None,
                 {"command": commands[0], "returncode": 0},
             )
         ]
@@ -1137,7 +1167,7 @@ class TestCLIDeployRegistration:
     def test_deployment_controller_completes_failed_command(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        completions: list[tuple[str, str, dict[str, object] | None]] = []
+        completions: list[tuple[str, str, str | None, dict[str, object] | None]] = []
         operation = {
             "operation_id": "op-2",
             "action": "logs",
@@ -1153,14 +1183,20 @@ class TestCLIDeployRegistration:
         )
         monkeypatch.setattr(
             cli_main,
+            "_heartbeat_deployment_operation",
+            lambda *_args, **_kwargs: {},
+        )
+        monkeypatch.setattr(
+            cli_main,
             "_append_deployment_operation_event",
             lambda *_args, **_kwargs: None,
         )
         monkeypatch.setattr(
             cli_main,
             "_complete_deployment_operation",
-            lambda _api_url, operation_id, status, message, metadata=None: (
-                completions.append((status, operation_id, metadata)) or {}
+            lambda _api_url, operation_id, status, message, stdout_summary=None, stderr_summary=None, metadata=None: (
+                completions.append((status, operation_id, stderr_summary, metadata))
+                or {}
             ),
         )
         monkeypatch.setattr(
@@ -1172,6 +1208,7 @@ class TestCLIDeployRegistration:
         ok = cli_main._run_deployment_controller_operation(
             operation,
             api_url="http://api:8000",
+            controller_id="controller-1",
             repo_root=tmp_path,
             chart_ref="infra/helm/moiraweave",
             namespace=None,
@@ -1181,9 +1218,10 @@ class TestCLIDeployRegistration:
         assert ok is False
         assert completions[0][0] == "failed"
         assert completions[0][1] == "op-2"
-        assert completions[0][2] is not None
-        assert completions[0][2]["returncode"] == 1
-        assert completions[0][2]["output"] == "pods not found"
+        assert completions[0][2] == "pods not found"
+        assert completions[0][3] is not None
+        assert completions[0][3]["returncode"] == 1
+        assert completions[0][3]["output"] == "pods not found"
 
     def test_deployment_controller_can_apply_from_api_manifest(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1214,6 +1252,11 @@ class TestCLIDeployRegistration:
         )
         monkeypatch.setattr(
             cli_main,
+            "_heartbeat_deployment_operation",
+            lambda *_args, **_kwargs: {},
+        )
+        monkeypatch.setattr(
+            cli_main,
             "_append_deployment_operation_event",
             lambda *_args, **_kwargs: None,
         )
@@ -1233,6 +1276,7 @@ class TestCLIDeployRegistration:
         ok = cli_main._run_deployment_controller_operation(
             operation,
             api_url="http://api:8000",
+            controller_id="controller-1",
             repo_root=tmp_path,
             chart_ref="oci://ghcr.io/moiraweave-labs/charts/moiraweave",
             namespace="moiraweave-prod",
