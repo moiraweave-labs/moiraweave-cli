@@ -410,6 +410,70 @@ class TestCLIWorkloads:
         ]
 
 
+class TestCLIRuns:
+    def test_run_dead_letter_list_fetches_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {
+                "data": [
+                    {
+                        "message_id": "1-0",
+                        "reason": "invalid_run_message",
+                        "source_id": "0-0",
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.run_dead_letter_list(
+            limit=25,
+            api_url="http://api:8000",
+            json_output=False,
+        )
+
+        assert calls == [
+            (
+                "GET",
+                "http://api:8000/v1/runs/dead-letter?limit=25",
+                None,
+            )
+        ]
+
+    def test_run_dead_letter_purge_deletes_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"message_id": "1-0", "reason": "invalid_run_message"}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.run_dead_letter_purge("1-0", api_url="http://api:8000")
+
+        assert calls == [
+            (
+                "DELETE",
+                "http://api:8000/v1/runs/dead-letter/1-0",
+                None,
+            )
+        ]
+
+
 class TestCLIDefaults:
     def test_init_noninteractive_flag_recognized(
         self, cli_command: list[str], repo_root: Path

@@ -95,6 +95,7 @@ moira secrets list --target kubernetes --env dev --kubernetes-secret moiraweave-
 - `moira demo agent`: create a no-secret mock agent workload.
 - `moira workload new|list|show|deploy|status|preflight|logs`: manage workload manifests.
 - `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
+- `moira run dead-letter list|purge`: inspect and clean failed dispatch messages.
 - `moira agent chat`: create a session if needed and send one message.
 - `moira agent session create|message|history`: interact with agent sessions.
 - `moira agent channel-message`: simulate Telegram, Slack, Discord, or webhook ingress. The channel must be listed in the agent workload's `spec.agent.exposedChannels`.

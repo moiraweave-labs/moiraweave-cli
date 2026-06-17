@@ -81,6 +81,7 @@ app = typer.Typer(
 )
 workload_app = typer.Typer(help="Manage workloads")
 run_app = typer.Typer(help="Submit, watch, and cancel runs")
+run_dead_letter_app = typer.Typer(help="Inspect failed run dispatch messages")
 agent_app = typer.Typer(help="Manage agent sessions")
 agent_session_app = typer.Typer(help="Create and message agent sessions")
 deploy_app = typer.Typer(help="Generate or apply deployment assets")
@@ -124,6 +125,7 @@ security_app.add_typer(security_user_app, name="user")
 security_app.add_typer(security_team_app, name="team")
 security_app.add_typer(security_api_key_app, name="api-key")
 deploy_app.add_typer(deploy_controller_app, name="controller")
+run_app.add_typer(run_dead_letter_app, name="dead-letter")
 
 
 def _repo_root() -> pathlib.Path:
@@ -3050,6 +3052,43 @@ def run_artifacts(
     """List artifacts for a run."""
     response = _request_json("GET", f"{api_url}/v1/runs/{run_id}/artifacts")
     console.print(Syntax(json.dumps(response.get("data", response), indent=2), "json"))
+
+
+@run_dead_letter_app.command("list")
+def run_dead_letter_list(
+    limit: int = typer.Option(50, "--limit", min=1, max=200),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
+) -> None:
+    """List failed run dispatch messages from the dead-letter stream."""
+    response = _request_json(
+        "GET",
+        f"{api_url}/v1/runs/dead-letter?{urlencode({'limit': str(limit)})}",
+    )
+    if json_output:
+        _print_json(response.get("data", response))
+        return
+    _print_records_table(
+        "Run dead-letter entries",
+        [
+            ("message_id", "Message", "cyan"),
+            ("reason", "Reason", "yellow"),
+            ("source_id", "Source", "white"),
+            ("created_at", "Created", "bright_black"),
+        ],
+        _response_items(response),
+    )
+
+
+@run_dead_letter_app.command("purge")
+def run_dead_letter_purge(
+    message_id: str = typer.Argument(..., help="Dead-letter stream message ID."),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """Delete one dead-letter entry after inspection."""
+    response = _request_json("DELETE", f"{api_url}/v1/runs/dead-letter/{message_id}")
+    ui.success(f"Purged dead-letter entry {response.get('message_id', message_id)}")
+    _print_json(response)
 
 
 @app.command()
