@@ -3267,6 +3267,31 @@ def run_submit(
         _watch_run(run_id, api_url, timeout)
 
 
+@run_app.command("list")
+def run_list(
+    workload: str | None = typer.Option(
+        None, "--workload", help="Filter by workload name."
+    ),
+    env: str | None = typer.Option(
+        None, "--env", help="Filter by deployment environment."
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, max=200),
+    offset: int = typer.Option(0, "--offset", min=0),
+    api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
+) -> None:
+    """List runs visible to the current subject."""
+    params = {
+        "limit": str(limit),
+        "offset": str(offset),
+    }
+    if workload:
+        params["workload_name"] = workload
+    if env:
+        params["env"] = env
+    response = _request_json("GET", f"{api_url}/v1/runs?{urlencode(params)}")
+    console.print(Syntax(json.dumps(response.get("data", response), indent=2), "json"))
+
+
 @run_app.command("watch")
 def run_watch(
     run_id: str = typer.Argument(..., help="Run ID."),
@@ -3300,10 +3325,19 @@ def run_events(
 @run_app.command("artifacts")
 def run_artifacts(
     run_id: str = typer.Argument(..., help="Run ID."),
+    env: str | None = typer.Option(
+        None, "--env", help="Filter by deployment environment."
+    ),
     api_url: str = typer.Option(DEFAULT_API_URL, help="Gateway API base URL."),
 ) -> None:
     """List artifacts for a run."""
-    response = _request_json("GET", f"{api_url}/v1/runs/{run_id}/artifacts")
+    if env:
+        response = _request_json(
+            "GET",
+            f"{api_url}/v1/artifacts?{urlencode({'run_id': run_id, 'env': env})}",
+        )
+    else:
+        response = _request_json("GET", f"{api_url}/v1/runs/{run_id}/artifacts")
     console.print(Syntax(json.dumps(response.get("data", response), indent=2), "json"))
 
 

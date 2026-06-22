@@ -502,6 +502,66 @@ class TestCLIWorkloads:
 
 
 class TestCLIRuns:
+    def test_run_list_filters_by_workload_and_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"data": [{"run_id": "run-prod", "status": "succeeded"}]}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.run_list(
+            workload="hermes",
+            env="prod",
+            limit=25,
+            offset=10,
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "GET",
+                "http://api:8000/v1/runs?limit=25&offset=10&workload_name=hermes&env=prod",
+                None,
+            )
+        ]
+
+    def test_run_artifacts_can_filter_by_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+        def fake_request(
+            method: str,
+            url: str,
+            payload: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append((method, url, payload))
+            return {"data": [{"name": "prod.json"}]}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        cli_main.run_artifacts(
+            "run-prod",
+            env="prod",
+            api_url="http://api:8000",
+        )
+
+        assert calls == [
+            (
+                "GET",
+                "http://api:8000/v1/artifacts?run_id=run-prod&env=prod",
+                None,
+            )
+        ]
+
     def test_run_dead_letter_list_fetches_entries(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

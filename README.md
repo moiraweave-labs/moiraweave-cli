@@ -94,7 +94,9 @@ moira secrets list --target kubernetes --env dev --kubernetes-secret moiraweave-
 - `moira doctor`: diagnose local onboarding blockers before Docker starts.
 - `moira demo agent`: create a no-secret mock agent workload.
 - `moira workload new|list|show|deploy|status|preflight|logs`: manage workload manifests.
-- `moira run submit|watch|cancel|events|artifacts`: operate workload runs.
+- `moira run submit|list|watch|cancel|events|artifacts`: operate workload runs.
+  Use `moira run list --env prod` and `moira run artifacts <run-id> --env prod`
+  when you need the same environment-focused view as the UI.
 - `moira run dead-letter list|replay|purge`: inspect, recover, or clean failed dispatch messages.
 - `moira agent chat`: create a session if needed and send one message.
 - `moira agent session create|message|history`: interact with agent sessions.
