@@ -109,6 +109,57 @@ class TestDeploymentControllerHeartbeat:
         assert len(heartbeats) >= 2
         assert set(heartbeats) == {("http://api:8000", "op-1", "controller-1")}
 
+    def test_controller_lists_queued_and_expired_running_operations(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        requests: list[str] = []
+
+        def fake_request(method: str, url: str, payload: dict[str, object] | None = None) -> dict[str, object]:
+            del method, payload
+            requests.append(url)
+            if "status=queued" in url:
+                return {
+                    "data": [
+                        {
+                            "operation_id": "queued-1",
+                            "status": "queued",
+                            "lease_expires_at": None,
+                        }
+                    ]
+                }
+            if "status=running" in url:
+                return {
+                    "data": [
+                        {
+                            "operation_id": "running-expired",
+                            "status": "running",
+                            "lease_expires_at": "2020-01-01T00:00:00+00:00",
+                        },
+                        {
+                            "operation_id": "running-active",
+                            "status": "running",
+                            "lease_expires_at": "2999-01-01T00:00:00+00:00",
+                        },
+                    ]
+                }
+            return {"data": []}
+
+        monkeypatch.setattr(cli_main, "_request_json", fake_request)
+
+        operations = cli_main._list_controller_operations(
+            "http://api:8000",
+            target="kubernetes",
+            env="dev",
+            limit=5,
+        )
+
+        assert [operation["operation_id"] for operation in operations] == [
+            "queued-1",
+            "running-expired",
+        ]
+        assert any("status=queued" in url for url in requests)
+        assert any("status=running" in url for url in requests)
+
 
 class TestCLIWorkloads:
     def test_demo_agent_creates_runnable_manifest(

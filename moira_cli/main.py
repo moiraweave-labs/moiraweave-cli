@@ -11,6 +11,7 @@ import socket
 import subprocess
 import time
 from collections import Counter
+from datetime import UTC, datetime
 from threading import Event, Thread
 from typing import Any, NoReturn
 from urllib.parse import quote, urlencode, urlparse
@@ -315,10 +316,42 @@ def _list_controller_operations(
     env: str,
     limit: int,
 ) -> list[dict[str, Any]]:
+    queued = _fetch_controller_operations(
+        api_url,
+        target=target,
+        env=env,
+        status="queued",
+        limit=limit,
+    )
+    if len(queued) >= limit:
+        return queued[:limit]
+    running = _fetch_controller_operations(
+        api_url,
+        target=target,
+        env=env,
+        status="running",
+        limit=limit,
+    )
+    reclaimable = [
+        operation
+        for operation in running
+        if _deployment_operation_lease_expired(operation)
+    ]
+    return [*queued, *reclaimable][:limit]
+
+
+def _fetch_controller_operations(
+    api_url: str,
+    *,
+    target: str,
+    env: str,
+    status: str,
+    limit: int,
+) -> list[dict[str, Any]]:
     query = urlencode(
         {
             "scope": "all",
-            "status": "queued",
+            "status": status,
             "target": target,
             "env": env,
             "limit": str(limit),
@@ -329,6 +362,19 @@ def _list_controller_operations(
     )
     data = response.get("data", [])
     return [dict(item) for item in data] if isinstance(data, list) else []
+
+
+def _deployment_operation_lease_expired(operation: dict[str, Any]) -> bool:
+    raw = operation.get("lease_expires_at")
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at <= datetime.now(UTC)
 
 
 def _claim_deployment_operation(
