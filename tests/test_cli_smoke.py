@@ -114,7 +114,9 @@ class TestDeploymentControllerHeartbeat:
     ) -> None:
         requests: list[str] = []
 
-        def fake_request(method: str, url: str, payload: dict[str, object] | None = None) -> dict[str, object]:
+        def fake_request(
+            method: str, url: str, payload: dict[str, object] | None = None
+        ) -> dict[str, object]:
             del method, payload
             requests.append(url)
             if "status=queued" in url:
