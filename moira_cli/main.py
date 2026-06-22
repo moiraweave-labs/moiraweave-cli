@@ -11,6 +11,7 @@ import socket
 import subprocess
 import time
 from collections import Counter
+from threading import Event, Thread
 from typing import Any, NoReturn
 from urllib.parse import quote, urlencode, urlparse
 
@@ -364,6 +365,44 @@ def _heartbeat_deployment_operation(
             "metadata": {"client": "moira-cli", "mode": "deployment-controller"},
         },
     )
+
+
+def _run_controller_command_with_heartbeat(
+    command: list[str],
+    *,
+    cwd: pathlib.Path,
+    api_url: str,
+    operation_id: str,
+    controller_id: str,
+    lease_seconds: int = 300,
+    interval_seconds: float = 60.0,
+) -> tuple[int, str]:
+    stop = Event()
+
+    def beat() -> None:
+        try:
+            _heartbeat_deployment_operation(
+                api_url,
+                operation_id,
+                controller_id=controller_id,
+                lease_seconds=lease_seconds,
+            )
+        except Exception:
+            # The command result remains the source of truth. The API will surface
+            # lease expiry if every heartbeat fails.
+            return
+
+    def loop() -> None:
+        while not stop.wait(interval_seconds):
+            beat()
+
+    thread = Thread(target=loop, name="moira-deploy-controller-heartbeat", daemon=True)
+    thread.start()
+    try:
+        return _run_controller_command(command, cwd=cwd)
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
 
 
 def _append_deployment_operation_event(
@@ -3710,7 +3749,13 @@ def _run_deployment_controller_operation(
         f"Running: {' '.join(command)}",
         data={"command": command},
     )
-    returncode, output = _run_controller_command(command, cwd=cwd)
+    returncode, output = _run_controller_command_with_heartbeat(
+        command,
+        cwd=cwd,
+        api_url=api_url,
+        operation_id=operation_id,
+        controller_id=controller_id,
+    )
     output_tail = output[-4000:]
     if output_tail:
         _append_deployment_operation_event(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,43 @@ class TestCLISmokeBasic:
         )
         assert result.returncode == 0
         assert "Initialize" in result.stdout or "moira" in result.stdout.lower()
+
+
+class TestDeploymentControllerHeartbeat:
+    def test_controller_command_heartbeats_while_command_runs(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        heartbeats: list[tuple[str, str, str]] = []
+
+        monkeypatch.setattr(
+            cli_main,
+            "_heartbeat_deployment_operation",
+            lambda api_url, operation_id, controller_id, **_kwargs: (
+                heartbeats.append((api_url, operation_id, controller_id)) or {}
+            ),
+        )
+
+        def fake_run(command: list[str], cwd: Path | None = None) -> tuple[int, str]:
+            del command, cwd
+            deadline = time.monotonic() + 1.0
+            while len(heartbeats) < 2 and time.monotonic() < deadline:
+                time.sleep(0.005)
+            return 0, "done"
+
+        monkeypatch.setattr(cli_main, "_run_controller_command", fake_run)
+
+        result = cli_main._run_controller_command_with_heartbeat(
+            ["helm", "upgrade"],
+            cwd=tmp_path,
+            api_url="http://api:8000",
+            operation_id="op-1",
+            controller_id="controller-1",
+            interval_seconds=0.01,
+        )
+
+        assert result == (0, "done")
+        assert len(heartbeats) >= 2
+        assert set(heartbeats) == {("http://api:8000", "op-1", "controller-1")}
 
 
 class TestCLIWorkloads:
