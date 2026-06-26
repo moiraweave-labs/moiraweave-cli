@@ -6,6 +6,7 @@ Run with ``MOIRAWEAVE_LOCAL_E2E=1 uv run pytest tests/test_local_e2e.py``.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -31,6 +32,23 @@ def _image_available(image: str, env: dict[str, str]) -> bool:
         check=False,
     )
     return remote.returncode == 0
+
+
+def _run_moira(
+    workspace: Path,
+    env: dict[str, str],
+    args: list[str],
+    *,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "run", "moira", *args],
+        cwd=workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
 
 
 @pytest.mark.integration
@@ -74,21 +92,18 @@ def test_moira_up_demo_agent_chat_fresh_workspace(tmp_path: Path) -> None:
         )
 
     try:
-        up = subprocess.run(
-            ["uv", "run", "moira", "up", "--api-url", "http://localhost:8100"],
-            cwd=workspace,
-            env=env,
-            capture_output=True,
-            text=True,
+        up = _run_moira(
+            workspace,
+            env,
+            ["up", "--api-url", "http://localhost:8100"],
             timeout=300,
         )
         assert up.returncode == 0, up.stdout + up.stderr
 
-        chat = subprocess.run(
+        chat = _run_moira(
+            workspace,
+            env,
             [
-                "uv",
-                "run",
-                "moira",
                 "agent",
                 "chat",
                 "demo-agent",
@@ -97,15 +112,49 @@ def test_moira_up_demo_agent_chat_fresh_workspace(tmp_path: Path) -> None:
                 "--api-url",
                 "http://localhost:8100",
             ],
-            cwd=workspace,
-            env=env,
-            capture_output=True,
-            text=True,
             timeout=180,
         )
         assert chat.returncode == 0, chat.stdout + chat.stderr
         assert "Demo agent received" in chat.stdout
         assert "demo-reply.json" in chat.stdout
+
+        runs = _run_moira(
+            workspace,
+            env,
+            [
+                "run",
+                "list",
+                "--workload",
+                "demo-agent",
+                "--limit",
+                "1",
+                "--api-url",
+                "http://localhost:8100",
+            ],
+            timeout=30,
+        )
+        assert runs.returncode == 0, runs.stdout + runs.stderr
+        run_items = json.loads(runs.stdout)
+        assert run_items, runs.stdout
+        run_id = run_items[0]["run_id"]
+
+        events = _run_moira(
+            workspace,
+            env,
+            ["run", "events", run_id, "--api-url", "http://localhost:8100"],
+            timeout=30,
+        )
+        assert events.returncode == 0, events.stdout + events.stderr
+        assert "executor.agent" in events.stdout
+
+        artifacts = _run_moira(
+            workspace,
+            env,
+            ["run", "artifacts", run_id, "--api-url", "http://localhost:8100"],
+            timeout=30,
+        )
+        assert artifacts.returncode == 0, artifacts.stdout + artifacts.stderr
+        assert "demo-reply.json" in artifacts.stdout
     finally:
         subprocess.run(
             ["docker", "compose", "down", "--volumes"],
