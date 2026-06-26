@@ -63,6 +63,10 @@ errors.
 The CLI also publishes `ghcr.io/moiraweave-labs/moiraweave-cli:latest`. That
 image includes `moira`, Helm, and `kubectl` so it can run the Kubernetes
 deployment controller inside a cluster, CI runner, or operator shell.
+The Docker workflow keeps Trivy strict for the image and temporarily excludes
+only `/usr/local/bin/kubectl` while the latest stable upstream kubectl embeds a
+vulnerable `golang.org/x/net`; remove that exclusion as soon as Kubernetes
+publishes a rebuilt stable binary.
 
 Start from another agent template when you want the first run to be a real
 runtime instead of the demo:
