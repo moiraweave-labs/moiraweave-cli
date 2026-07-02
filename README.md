@@ -14,6 +14,13 @@ uv tool install moiraweave-cli
 moira --help
 ```
 
+This install command uses PyPI. PyPI is not required by the MoiraWeave runtime
+once the CLI has generated or started the stack: API Gateway, worker, UI,
+storage services, workloads, and the Helm chart run from GHCR images. If PyPI is
+not available, use a local checkout with `uv tool install .` from this
+repository, or run the published CLI image when operating from CI or Kubernetes:
+`ghcr.io/moiraweave-labs/moiraweave-cli:latest`.
+
 ## Quickstart
 
 ```bash
