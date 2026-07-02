@@ -2,6 +2,13 @@
 
 > **Migration notice (2026-05-20)**: The CLI command was previously `inferflow`. It is now `moira`. No legacy aliases are maintained.
 
+## [0.3.3](https://github.com/moiraweave-labs/moiraweave-cli/compare/v0.3.2...v0.3.3) (2026-07-02)
+
+
+### Documentation
+
+* clarify PyPI install boundary ([ee33c1a](https://github.com/moiraweave-labs/moiraweave-cli/commit/ee33c1af66247bb60ebb2bf130930a9c6934ca2b))
+
 ## [0.3.2](https://github.com/moiraweave-labs/moiraweave-cli/compare/v0.3.1...v0.3.2) (2026-06-30)
 
 
